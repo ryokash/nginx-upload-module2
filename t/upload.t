@@ -5,7 +5,7 @@ use File::Basename qw(dirname);
 
 use lib dirname(__FILE__) . "/lib";
 
-use Test::Nginx::Socket tests => 27;
+use Test::Nginx::Socket tests => 23;
 use Test::Nginx::UploadModule;
 
 
@@ -32,6 +32,8 @@ run_tests();
 
 __DATA__
 === TEST 1: single chunk upload
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers
 X-Content-Range: bytes 0-3/4
@@ -54,6 +56,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/1/0000000001
 qr/^test$/
 
 === TEST 2: multiple chunk uploads
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- http_config eval: $::http_config
 --- config eval: $::config
 --- more_headers eval
@@ -84,6 +88,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/2/0000000002
 qr/^test$/
 
 === Test 3: large multiple chunk uploads
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers eval
 [qq{X-Content-Range: bytes 0-131071/262144
@@ -113,6 +119,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/3/0000000003
 qr/^(??{'x' x 262144})$/
 
 === Test 4: upload_limit_rate
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location = /upload/ {
     upload_pass @upstream;
@@ -152,6 +160,8 @@ qr/^(??{'x' x 262144})$/
 [qr/[34]\.\d\d\d$/, qr/[34]\.\d\d\d$/]
 
 === TEST 5: multiple chunk uploads out-of-order
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers eval
 [qq{X-Content-Range: bytes 131072-262143/262144

@@ -15,6 +15,8 @@ run_tests();
 
 __DATA__
 === TEST 1: OPTIONS request
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;
@@ -27,6 +29,8 @@ OPTIONS /upload/
 --- error_code: 200
 
 === TEST 2: http2 OPTIONS request
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- http2
 --- config
 location /upload/ {

@@ -90,6 +90,8 @@ run_tests();
 
 __DATA__
 === TEST 1: single chunk upload
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{simple}
 --- more_headers eval: $::requests->{single_chunk}->{headers}->()
 --- request eval: $::requests->{single_chunk}->{body}
@@ -103,6 +105,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/$::session_id/$::session_
 qr/^test$/
 
 === TEST 2: single chunk upload (http2)
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{simple}
 --- http2
 --- skip_nginx
@@ -119,6 +123,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/$::session_id/$::session_
 qr/^test$/
 
 === TEST 3: multi-chunk uploads
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{simple}
 --- more_headers eval: $::requests->{multi_chunk}->{headers}->()
 --- request eval: $::requests->{multi_chunk}->{body}
@@ -133,6 +139,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/$::session_id/$::session_
 qr/^(??{'a' x 131072 . 'b' x 131072})$/
 
 === TEST 4: multi-chunk uploads (hash funcs)
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{hash_funcs}
 --- more_headers eval: $::requests->{multi_chunk}->{headers}->()
 --- request eval: $::requests->{multi_chunk}->{body}
@@ -156,6 +164,8 @@ qr/^(??{'a' x 131072 . 'b' x 131072})$/
 === TEST 5: multi-chunk uploads out of order
 --- todo
 2: BUG https://github.com/fdintino/nginx-upload-module/issues/106
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{simple}
 --- more_headers eval: [ CORE::reverse @{$::requests->{multi_chunk}->{headers}->()} ]
 --- request eval: [ CORE::reverse @{$::requests->{multi_chunk}->{body}}]
@@ -168,6 +178,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/$::session_id/$::session_
 }]
 
 === TEST 6: multipart/form-data
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{simple}
 --- raw_request eval: $::requests->{standard}->{raw_request}->()
 --- error_code: 200
@@ -180,6 +192,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/1/0000000001
 qr/^(??{'a' x 131072 . 'b' x 131072})$/
 
 === TEST 7: multipart/form-data (hash fields)
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::configs->{hash_funcs}
 --- raw_request eval: $::requests->{standard}->{raw_request}->()
 --- error_code: 200

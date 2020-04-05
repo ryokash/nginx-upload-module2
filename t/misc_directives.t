@@ -15,6 +15,8 @@ run_tests();
 
 __DATA__
 === TEST 1: upload_pass_args on should pass GET params
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /test/ {
     upload_pass /upload/;
@@ -40,6 +42,8 @@ foo = bar
 upload_file_name = test.txt
 
 === TEST 2: upload_pass_args off should strip GET params
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /test/ {
     upload_pass /upload/;
@@ -64,6 +68,8 @@ test
 upload_file_name = test.txt
 
 === TEST 3: upload_tame_arrays on
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;
@@ -84,6 +90,8 @@ test
 upload_file_name = test.txt
 
 === TEST 4: upload_set_form_field multiple fields
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;
@@ -103,6 +111,8 @@ test
 upload_field_name_and_file_name = file test.txt
 
 === TEST 5: upload_set_form_field variable key
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;
@@ -124,6 +134,8 @@ upload_file_name = test.txt
 
 
 === TEST 6: upload_add_header
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;

@@ -15,6 +15,8 @@ run_tests();
 
 __DATA__
 === TEST 1: invalid content-range
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;
@@ -41,6 +43,8 @@ sub {
 }
 
 === TEST 2: invalid method
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config
 location /upload/ {
     upload_pass @upstream;

@@ -35,6 +35,8 @@ run_tests();
 
 __DATA__
 === TEST 1: http2 simple upload
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- http2
 --- skip_nginx
@@ -61,6 +63,8 @@ upload_tmp_path = $ENV{TEST_NGINX_UPLOAD_PATH}/store/1/0000000001
 "test"
 
 === TEST 2: http2 multiple chunk uploads
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- http_config eval: $::http_config
 --- config eval: $::config
 --- http2
@@ -95,6 +99,8 @@ upload_tmp_path = $ENV{TEST_NGINX_UPLOAD_PATH}/store/2/0000000002
 "test"
 
 === Test 3: http2 large multiple chunk uploads
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- http_config eval: $::http_config
 --- skip_nginx
 5: < 1.10.0
@@ -131,6 +137,8 @@ qr/^(??{'x' x 262144})$/
 === Test 4: http2 upload_limit_rate
 --- skip_nginx
 9: < 1.10.0
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- http2
 --- config
 location = /upload/ {
@@ -170,6 +178,8 @@ qr/^(??{'x' x 262144})$/
 === TEST 5: upload_add_header
 --- skip_nginx
 6: < 1.10.0
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- http2
 --- config
 location /upload/ {
