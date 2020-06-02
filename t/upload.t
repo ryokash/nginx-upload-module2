@@ -5,7 +5,7 @@ use File::Basename qw(dirname);
 
 use lib dirname(__FILE__) . "/lib";
 
-use Test::Nginx::Socket tests => 33;
+use Test::Nginx::Socket tests => 29;
 use Test::Nginx::UploadModule;
 
 
@@ -191,6 +191,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/5/0000000005
 qr/^(??{'a' x 131072 . 'b' x 131072})$/
 
 === TEST 6: multipart upload
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers
 Content-Type: multipart/form-data; boundary=BOUNDARY
@@ -216,6 +218,8 @@ upload_tmp_path = ${ENV{TEST_NGINX_UPLOAD_PATH}}/store/8/0000123458
 qr/^test$/
 
 === TEST 7: multipart upload with quoted boundary and unquoted names
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers
 Content-Type: multipart/form-data; boundary="BOUNDARY"
