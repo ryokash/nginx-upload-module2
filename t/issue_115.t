@@ -32,6 +32,8 @@ run_tests();
 
 __DATA__
 === TEST 1: single chunk upload
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers
 X-Content-Range: bytes 0-0/1
@@ -57,6 +59,8 @@ qr/^x$/
 
 === TEST 2: multiple single-byte chunk uploads 
 --- http_config eval: $::http_config
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers eval
 [qq{X-Content-Range: bytes 0-0/2
@@ -78,6 +82,8 @@ Content-Disposition: form-data; name="file"; filename="test.txt"}]
 
 === TEST 3: multiple single-byte chunk uploads success
 --- http_config eval: $::http_config
+--- main_config
+    load_module /etc/nginx/modules/ngx_http_upload_module.so;
 --- config eval: $::config
 --- more_headers eval
 [qq{X-Content-Range: bytes 0-0/2

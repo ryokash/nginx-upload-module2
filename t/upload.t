@@ -5,7 +5,7 @@ use File::Basename qw(dirname);
 
 use lib dirname(__FILE__) . "/lib";
 
-use Test::Nginx::Socket tests => 29;
+use Test::Nginx::Socket tests => 33;
 use Test::Nginx::UploadModule;
 
 
