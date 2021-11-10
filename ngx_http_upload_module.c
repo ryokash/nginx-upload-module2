@@ -1444,8 +1444,6 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t *u) { /* {{
             file->fd = ngx_open_file(file->name.data, NGX_FILE_WRONLY, NGX_FILE_CREATE_OR_OPEN, ulcf->store_access);
 
             if (file->fd == NGX_INVALID_FILE) {
-                err = ngx_errno;
-
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
                               "failed to create output file \"%V\" for \"%V\"", &file->name, &u->file_name);
                 return NGX_UPLOAD_IOERROR;
@@ -2096,7 +2094,6 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
     ngx_http_upload_merger_state_t ms;
     off_t        remaining;
     ssize_t      rc;
-    __attribute__((__unused__)) int result;
     ngx_buf_t    in_buf;
     ngx_buf_t    out_buf;
     ngx_http_upload_loc_conf_t  *ulcf = ngx_http_get_module_loc_conf(u->request, ngx_http_upload_module);
@@ -2190,7 +2187,9 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
     }
 
     if(out_buf.file_pos < state_file->info.st_size) {
-        result = ftruncate(state_file->fd, out_buf.file_pos);
+        int result = ftruncate(state_file->fd, out_buf.file_pos);
+        ngx_log_error(NGX_LOG_WARN, u->log, 0,
+                      "state file \"%V\" is truncated %i", &state_file->name, result);
     }
 
     rc = ms.complete_ranges ? NGX_OK : NGX_AGAIN;
