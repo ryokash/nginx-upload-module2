@@ -45,6 +45,58 @@ typedef ngx_md5_t MD5_CTX;
 
 #endif
 
+// workaround for compiling error on windows because of _OFF_T_DEFINED being defined in ngx_win32_config.h.
+#ifdef _WIN32
+typedef long _off_t;
+#endif
+#include <sys/stat.h>
+#ifdef _WIN32
+typedef struct _stat stat_t;
+#define ngx_stat(path, buffer) _stat(path, buffer)
+#define alloca _alloca
+//#define S_IFDIR(st) ((st.st_mode & _S_IFMT) == _S_IFDIR)
+#else
+typedef struct stat stat_t;
+#define ngx_stat(path, buffer) stat(path, buffer)
+#endif
+
+
+#ifdef _WIN32
+#define ngx_lock_fd(fd)
+#define ngx_unlock_fd(fd)
+#define strncasecmp(s1, s2, size) _strnicmp((char*)s1, (char*)s2, size)
+
+#pragma warning(push)
+#pragma warning(disable: 4293)
+// TODO: check errors
+int ftruncate(HANDLE fd, _off_t length)
+{
+    LONG high = 0;
+    DWORD low = SetFilePointer(fd, 0, &high, FILE_CURRENT);
+
+    LONG pos = (LONG)(((ULONG)high << 32) | (ULONG)low);
+
+    high = length >> 32;
+    low = (DWORD)length;
+
+    SetFilePointer(fd, low, &high, FILE_BEGIN);
+    SetEndOfFile(fd);
+
+    if (length > pos) {
+        high = (LONG)((ULONG)pos >> 32);
+        low = (DWORD)pos;
+        SetFilePointer(fd, low, &high, FILE_BEGIN);
+    }
+
+    return 0;
+}
+#pragma warning(pop)
+
+#endif
+
+#define ngx_fsize(file) ngx_file_size(&file->info)
+
+
 #define MULTIPART_FORM_DATA_STRING              "multipart/form-data"
 #define BOUNDARY_STRING                         "boundary="
 #define CONTENT_DISPOSITION_STRING              "Content-Disposition:"
@@ -1616,7 +1668,7 @@ static void ngx_http_upload_finish_handler(ngx_http_upload_ctx_t *u) { /* {{{ */
 
     if(u->is_file) {
         ucln = u->cln->data;
-        ucln->fd = -1;
+        ucln->fd = NGX_INVALID_FILE;
 
         ngx_close_file(u->output_file.fd);
 
@@ -1728,7 +1780,7 @@ static void ngx_http_upload_abort_handler(ngx_http_upload_ctx_t *u) { /* {{{ */
          * cleanup record as aborted.
          */
         ucln = u->cln->data;
-        ucln->fd = -1;
+        ucln->fd = NGX_INVALID_FILE;
         ucln->aborted = 1;
 
         ngx_close_file(u->output_file.fd);
@@ -2141,9 +2193,9 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
         in_buf.file_pos = state_file->offset;
         in_buf.pos = in_buf.last = in_buf.start;
 
-        if(state_file->offset < state_file->info.st_size) {
-            remaining = state_file->info.st_size - state_file->offset > in_buf.end - in_buf.start
-                ? in_buf.end - in_buf.start : state_file->info.st_size - state_file->offset;
+        if(state_file->offset < ngx_fsize(state_file)) {
+            remaining = ngx_fsize(state_file) - state_file->offset > in_buf.end - in_buf.start
+                ? in_buf.end - in_buf.start : ngx_fsize(state_file) - state_file->offset;
 
             rc = ngx_read_file(state_file, in_buf.pos, remaining, state_file->offset);
 
@@ -2154,7 +2206,7 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
             in_buf.last = in_buf.pos + rc;
         }
 
-        in_buf.last_buf = state_file->offset == state_file->info.st_size ? 1 : 0;
+        in_buf.last_buf = state_file->offset == ngx_fsize(state_file) ? 1 : 0;
 
         if(out_buf.pos != out_buf.last) {
             rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
@@ -2174,7 +2226,7 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
             rc = NGX_ERROR;
             goto failed;
         }
-    } while(state_file->offset < state_file->info.st_size);
+    } while(state_file->offset < ngx_fsize(state_file));
 
     if(out_buf.pos != out_buf.last) {
         rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
@@ -2186,7 +2238,7 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
         out_buf.file_pos += out_buf.last - out_buf.pos;
     }
 
-    if(out_buf.file_pos < state_file->info.st_size) {
+    if(out_buf.file_pos < ngx_fsize(state_file)) {
         int result = ftruncate(state_file->fd, out_buf.file_pos);
         ngx_log_error(NGX_LOG_WARN, u->log, 0,
                       "state file \"%V\" is truncated %i", &state_file->name, result);
