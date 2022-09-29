@@ -332,7 +332,6 @@ typedef struct ngx_http_upload_ctx_s {
     unsigned int        first_part:1;
     unsigned int        discard_data:1;
     unsigned int        is_file:1;
-    unsigned int        partial_content:1;
     unsigned int        prevent_output:1;
     unsigned int        calculate_crc32:1;
     unsigned int        started:1;
@@ -374,6 +373,7 @@ static ngx_int_t ngx_http_upload_crc32_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data);
 static ngx_int_t ngx_http_upload_uint_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data);
+static char* ngx_http_upload_module_init(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
 static char *ngx_http_upload_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 static ngx_int_t
@@ -388,7 +388,6 @@ static ngx_int_t ngx_http_upload_flush_output_buffer(ngx_http_upload_ctx_t *u,
     u_char *buf, size_t len);
 static ngx_int_t ngx_http_upload_append_field(ngx_http_upload_ctx_t *u,
     ngx_str_t *name, ngx_str_t *value);
-static ngx_int_t ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *range_n);
 static ngx_int_t ngx_http_upload_parse_range(ngx_str_t *range, ngx_http_upload_range_t *range_n);
 
 static void ngx_http_read_upload_client_request_body_handler(ngx_http_request_t *r);
@@ -1583,19 +1582,6 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t *u) { /* {{
         if(u->calculate_crc32)
             ngx_crc32_init(u->crc32);
 
-        if(u->partial_content) {
-            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0
-                , "started uploading part %O-%O/%O of file \"%V\" to \"%V\" (field \"%V\", content type \"%V\")"
-                , u->content_range_n.start
-                , u->content_range_n.end
-                , u->content_range_n.total
-                , &u->file_name
-                , &u->output_file.name
-                , &u->field_name
-                , &u->content_type
-                );
-        }
-        else {
             ngx_log_error(NGX_LOG_INFO, r->connection->log, 0
                 , "started uploading file \"%V\" to \"%V\" (field \"%V\", content type \"%V\")"
                 , &u->file_name
@@ -1687,55 +1673,6 @@ static void ngx_http_upload_finish_handler(ngx_http_upload_ctx_t *u) { /* {{{ */
         if(u->calculate_crc32)
             ngx_crc32_final(u->crc32);
 
-        if(u->partial_content) {
-            if(u->output_file.offset != u->content_range_n.end + 1) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0
-                    , "file offset at the end of a part %O does not match the end specified range %O-%O/%O"
-                    , u->output_file.offset
-                    , u->content_range_n.start
-                    , u->content_range_n.end
-                    , u->content_range_n.total
-                    , u->output_file.name
-                    );
-
-                goto rollback;
-            }
-
-            rc = ngx_http_upload_merge_ranges(u, &u->content_range_n);
-
-            if(rc == NGX_ERROR) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0
-                    , "error merging ranges"
-                    );
-
-                goto rollback;
-            }
-
-            if(rc == NGX_AGAIN) {
-                /*
-                 * If there are more parts to go, we do not produce any output
-                 */
-                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0
-                    , "finished uploading part %O-%O/%O of a file \"%V\" to \"%V\""
-                    , u->content_range_n.start
-                    , u->content_range_n.end
-                    , u->content_range_n.total
-                    , &u->file_name
-                    , &u->output_file.name
-                    );
-
-                u->prevent_output = 1;
-
-                return;
-            }
-
-            if(ngx_delete_file(u->state_file.name.data) == NGX_FILE_ERROR) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "failed to remove state file \"%V\"", &u->state_file.name);
-            } else {
-                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "removed state file \"%V\"", &u->state_file.name);
-            }
-        }
-
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0
             , "finished uploading file \"%V\" to \"%V\""
             , &u->file_name
@@ -1784,20 +1721,6 @@ static void ngx_http_upload_abort_handler(ngx_http_upload_ctx_t *u) { /* {{{ */
         ucln->aborted = 1;
 
         ngx_close_file(u->output_file.fd);
-
-        if(!u->partial_content) {
-            if(ngx_delete_file(u->output_file.name.data) == NGX_FILE_ERROR) { 
-                ngx_log_error(NGX_LOG_ERR, u->log, ngx_errno
-                    , "aborted uploading file \"%V\" to \"%V\", failed to remove destination file"
-                    , &u->file_name
-                    , &u->output_file.name);
-            } else {
-                ngx_log_error(NGX_LOG_ALERT, u->log, 0
-                    , "aborted uploading file \"%V\" to \"%V\", dest file removed"
-                    , &u->file_name
-                    , &u->output_file.name);
-            }
-        }
     }
 
     // Rollback output chain to the previous consistant state
@@ -1817,14 +1740,6 @@ static ngx_int_t ngx_http_upload_flush_output_buffer(ngx_http_upload_ctx_t *u, u
     ngx_http_upload_loc_conf_t     *ulcf = ngx_http_get_module_loc_conf(r, ngx_http_upload_module);
 
     if(u->is_file) {
-        if(u->partial_content) {
-            if(u->output_file.offset > u->content_range_n.end)
-                return NGX_OK;
-
-            if(u->output_file.offset + (off_t)len > u->content_range_n.end + 1)
-                len = u->content_range_n.end - u->output_file.offset + 1;
-        }
-
         if(u->md5_ctx)
             MD5Update(&u->md5_ctx->md5, buf, len);
 
@@ -1840,7 +1755,7 @@ static ngx_int_t ngx_http_upload_flush_output_buffer(ngx_http_upload_ctx_t *u, u
         if(u->calculate_crc32)
             ngx_crc32_update(&u->crc32, buf, len);
 
-        if(ulcf->max_file_size != 0 && !u->partial_content) {
+        if(ulcf->max_file_size != 0) {
             if(u->output_file.offset + (off_t)len > ulcf->max_file_size)
                 return NGX_UPLOAD_TOOLARGE;
         }
@@ -1967,291 +1882,6 @@ ngx_http_upload_append_field(ngx_http_upload_ctx_t *u, ngx_str_t *name, ngx_str_
     }
 
     return NGX_OK;
-} /* }}} */
-
-static ngx_int_t ngx_http_upload_add_range(ngx_http_upload_merger_state_t *ms, ngx_http_upload_range_t *range_n) {
-    ms->out_buf->last = ngx_sprintf(ms->out_buf->last, "%O-%O/%O\x0a",
-        range_n->start,
-        range_n->end,
-        range_n->total);
-
-    if(*ms->range_header_buffer_pos < ms->range_header_buffer_end) {
-        *ms->range_header_buffer_pos = ngx_sprintf(*ms->range_header_buffer_pos,
-            ms->first_range ? "%O-%O/%O" : ",%O-%O/%O",
-            range_n->start,
-            range_n->end,
-            range_n->total);
-
-        ms->first_range = 0;
-    }
-
-    return NGX_OK;
-}
-
-static ngx_int_t /* {{{ ngx_http_upload_buf_merge_range */
-ngx_http_upload_buf_merge_range(ngx_http_upload_merger_state_t *ms, ngx_http_upload_range_t *range_n) {
-    u_char *p, c;
-    off_t                  *field;
-
-    p = ms->in_buf->pos;
-
-    field = ms->parser_state;
-
-    do{
-        *field = 0;
-
-        while(p != ms->in_buf->last) {
-
-            c = *p++;
-
-            if(c >= '0' && c <= '9') {
-                (*field) = (*field) * 10 + (c - '0');
-            }
-            else if(c == '-') {
-                if(field != &ms->current_range_n.start) {
-                    ngx_log_debug0(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "unexpected - while parsing range");
-                    return NGX_ERROR;
-                }
-
-                field = &ms->current_range_n.end;
-                break;
-            }
-            else if(c == '/') {
-                if(field != &ms->current_range_n.end) {
-                    ngx_log_debug0(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "unexpected / while parsing range");
-                    return NGX_ERROR;
-                }
-
-                field = &ms->current_range_n.total;
-                break;
-            }
-            else if(c == LF) {
-                if(field != &ms->current_range_n.total) {
-                    ngx_log_debug0(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "unexpected end of line while parsing range");
-                    return NGX_ERROR;
-                }
-
-                if(ms->current_range_n.start > ms->current_range_n.end || ms->current_range_n.start > ms->current_range_n.total
-                    || ms->current_range_n.end > ms->current_range_n.total)
-                {
-                    ngx_log_debug3(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "inconsistent bounds while parsing range: %O-%O/%O",
-                                   ms->current_range_n.start,
-                                   ms->current_range_n.end,
-                                   ms->current_range_n.total);
-                    return NGX_ERROR;
-                }
-
-                if(ms->current_range_n.total != range_n->total) {
-                    ngx_log_debug0(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "total number of bytes mismatch while parsing range");
-                    return NGX_ERROR;
-                } 
-
-                field = &ms->current_range_n.start;
-
-                if(ms->current_range_n.end + 1 < range_n->start) {
-                    /*
-                     * Current range is entirely below the new one,
-                     * output current one and seek next
-                     */
-                    if(ngx_http_upload_add_range(ms, &ms->current_range_n) != NGX_OK) {
-                        return NGX_ERROR;
-                    }
-
-                    ngx_log_debug3(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "< %O-%O/%O", ms->current_range_n.start,
-                                   ms->current_range_n.end, ms->current_range_n.total);
-                    break;
-                }
-
-                if(ms->current_range_n.start > range_n->end + 1) {
-                    /*
-                     * Current range is entirely above the new one,
-                     * insert new range
-                     */
-                    if(!ms->found_lower_bound) {
-                        if(ngx_http_upload_add_range(ms, range_n) != NGX_OK) {
-                            return NGX_ERROR;
-                        }
-                    }
-
-                    if(ngx_http_upload_add_range(ms, &ms->current_range_n) != NGX_OK) {
-                        return NGX_ERROR;
-                    }
-
-                    ngx_log_debug6(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                                   "> %O-%O/%O %O-%O/%O",
-                                   range_n->start,
-                                   range_n->end,
-                                   range_n->total,
-                                   ms->current_range_n.start,
-                                   ms->current_range_n.end,
-                                   ms->current_range_n.total);
-
-                    ms->found_lower_bound = 1;
-                    break;
-                }
-
-                /*
-                 * Extend range to be merged with the current range
-                 */
-                range_n->start = range_n->start < ms->current_range_n.start ? range_n->start : ms->current_range_n.start;
-                range_n->end = range_n->end > ms->current_range_n.end ? range_n->end : ms->current_range_n.end;
-                break;
-            }
-            else {
-                ngx_log_debug1(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                               "unexpected character %c", *p);
-                return NGX_ERROR;
-            }
-        }
-    }while(p != ms->in_buf->last);
-
-    if(ms->in_buf->last_buf) {
-        if(field != &ms->current_range_n.start) {
-            ngx_log_debug0(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                           "unexpected end of file while merging ranges");
-            return NGX_ERROR;
-        }
-
-        if(!ms->found_lower_bound) {
-            if(ngx_http_upload_add_range(ms, range_n) != NGX_OK) {
-                return NGX_ERROR;
-            }
-
-            ngx_log_debug3(NGX_LOG_DEBUG_CORE, ms->log, 0,
-                           "a %O-%O/%O",
-                           range_n->start,
-                           range_n->end,
-                           range_n->total);
-
-            ms->complete_ranges = (range_n->start == 0) && (range_n->end == range_n->total - 1) ? 1 : 0;
-
-            ms->found_lower_bound = 1;
-        }
-    }
-
-    ms->parser_state = field;
-
-    return NGX_OK;
-} /* }}} */
-
-static ngx_int_t /* {{{ ngx_http_upload_merge_ranges */
-ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *range_n) {
-    ngx_file_t  *state_file = &u->state_file;
-    ngx_http_upload_merger_state_t ms;
-    off_t        remaining;
-    ssize_t      rc;
-    ngx_buf_t    in_buf;
-    ngx_buf_t    out_buf;
-    ngx_http_upload_loc_conf_t  *ulcf = ngx_http_get_module_loc_conf(u->request, ngx_http_upload_module);
-    ngx_http_upload_range_t  range_to_merge_n;
-    
-
-    state_file->fd = ngx_open_file(state_file->name.data, NGX_FILE_RDWR, NGX_FILE_CREATE_OR_OPEN, ulcf->store_access);
-
-    if (state_file->fd == NGX_INVALID_FILE) {
-        ngx_log_error(NGX_LOG_ERR, u->log, ngx_errno,
-                      "failed to create or open state file \"%V\"", &state_file->name);
-        return NGX_ERROR;
-    }
-
-    ngx_lock_fd(state_file->fd);
-
-    ngx_fd_info(state_file->fd, &state_file->info);
-
-    state_file->offset = 0;
-    state_file->log = u->log;
-
-    ms.in_buf = &in_buf;
-    ms.out_buf = &out_buf;
-    ms.parser_state = &ms.current_range_n.start;
-    ms.log = u->log;
-
-    ms.found_lower_bound = 0;
-    ms.complete_ranges = 0;
-    ms.first_range = 1;
-
-    ms.range_header_buffer = u->range_header_buffer;
-    ms.range_header_buffer_pos = &u->range_header_buffer_pos;
-    ms.range_header_buffer_end = u->range_header_buffer_end;
-
-    range_to_merge_n = *range_n;
-
-    out_buf.start = out_buf.pos = out_buf.last = u->merge_buffer;
-    out_buf.end = u->merge_buffer + (ulcf->merge_buffer_size >> 1) + NGX_OFF_T_LEN*3 + 2 + 1;
-    out_buf.file_pos = 0;
-
-    in_buf.start = in_buf.pos = in_buf.last = out_buf.end;
-    in_buf.end = u->merge_buffer + ulcf->merge_buffer_size;
-
-    do {
-        in_buf.file_pos = state_file->offset;
-        in_buf.pos = in_buf.last = in_buf.start;
-
-        if(state_file->offset < ngx_fsize(state_file)) {
-            remaining = ngx_fsize(state_file) - state_file->offset > in_buf.end - in_buf.start
-                ? in_buf.end - in_buf.start : ngx_fsize(state_file) - state_file->offset;
-
-            rc = ngx_read_file(state_file, in_buf.pos, remaining, state_file->offset);
-
-            if(rc < 0 || rc != remaining) {
-                goto failed;
-            }
-
-            in_buf.last = in_buf.pos + rc;
-        }
-
-        in_buf.last_buf = state_file->offset == ngx_fsize(state_file) ? 1 : 0;
-
-        if(out_buf.pos != out_buf.last) {
-            rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
-
-            if(rc < 0 || rc != out_buf.last - out_buf.pos) {
-                goto failed;
-            }
-
-            out_buf.file_pos += out_buf.last - out_buf.pos;
-        }
-
-        out_buf.pos = out_buf.last = out_buf.start;
-
-        if(ngx_http_upload_buf_merge_range(&ms, &range_to_merge_n) != NGX_OK) {
-            ngx_log_error(NGX_LOG_ERR, u->log, 0,
-                          "state file \"%V\" is corrupt", &state_file->name);
-            rc = NGX_ERROR;
-            goto failed;
-        }
-    } while(state_file->offset < ngx_fsize(state_file));
-
-    if(out_buf.pos != out_buf.last) {
-        rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
-
-        if(rc < 0 || rc != out_buf.last - out_buf.pos) {
-            goto failed;
-        }
-
-        out_buf.file_pos += out_buf.last - out_buf.pos;
-    }
-
-    if(out_buf.file_pos < ngx_fsize(state_file)) {
-        int result = ftruncate(state_file->fd, out_buf.file_pos);
-        ngx_log_error(NGX_LOG_WARN, u->log, 0,
-                      "state file \"%V\" is truncated %i", &state_file->name, result);
-    }
-
-    rc = ms.complete_ranges ? NGX_OK : NGX_AGAIN;
-
-failed:
-    ngx_unlock_fd(state_file->fd);
-
-    ngx_close_file(state_file->fd);
-
-    return rc;
 } /* }}} */
 
 static void * /* {{{ ngx_http_upload_create_loc_conf */
@@ -2497,7 +2127,7 @@ ngx_http_upload_md5_variable(ngx_http_request_t *r,
 
     u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
 
-    if(u->md5_ctx == NULL || u->partial_content) {
+    if(u->md5_ctx == NULL) {
         v->not_found = 1;
         return NGX_OK;
     }
@@ -2512,7 +2142,7 @@ ngx_http_upload_sha1_variable(ngx_http_request_t *r,
 
     u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
 
-    if(u->sha1_ctx == NULL || u->partial_content) {
+    if(u->sha1_ctx == NULL) {
         v->not_found = 1;
         return NGX_OK;
     }
@@ -2528,7 +2158,7 @@ ngx_http_upload_sha256_variable(ngx_http_request_t *r,
 
     u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
 
-    if(u->sha256_ctx == NULL || u->partial_content) {
+    if(u->sha256_ctx == NULL) {
         v->not_found = 1;
         return NGX_OK;
     }
@@ -2544,7 +2174,7 @@ ngx_http_upload_sha512_variable(ngx_http_request_t *r,
 
     u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
 
-    if(u->sha512_ctx == NULL || u->partial_content) {
+    if(u->sha512_ctx == NULL) {
         v->not_found = 1;
         return NGX_OK;
     }
@@ -2561,11 +2191,6 @@ ngx_http_upload_crc32_variable(ngx_http_request_t *r,
     uint32_t               *value;
 
     u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
-
-    if(u->partial_content) {
-        v->not_found = 1;
-        return NGX_OK;
-    }
 
     value = (uint32_t *) ((char *) u + data);
 
@@ -2647,10 +2272,7 @@ ngx_http_upload_content_range_variable(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    v->len = u->partial_content ?
-        ngx_sprintf(p, "bytes %O-%O/%O", value->start, value->end, value->total) - p :
-        ngx_sprintf(p, "bytes %O-%O/%O", (off_t)0, u->output_file.offset, u->output_file.offset) - p
-        ;
+    v->len = ngx_sprintf(p, "bytes %O-%O/%O", (off_t)0, u->output_file.offset, u->output_file.offset) - p;
     v->valid = 1;
     v->no_cacheable = 0;
     v->not_found = 0;
@@ -3683,8 +3305,6 @@ static void upload_discard_part_attributes(ngx_http_upload_ctx_t *upload_ctx) { 
 
     upload_ctx->session_id.len = 0;
     upload_ctx->session_id.data = NULL;
-
-    upload_ctx->partial_content = 0;
 } /* }}} */
 
 static ngx_int_t upload_start_file(ngx_http_upload_ctx_t *upload_ctx) { /* {{{ */
@@ -3814,7 +3434,7 @@ ngx_http_upload_validate_session_id(ngx_str_t *session_id) {
 }
 
 static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t *upload_ctx, ngx_http_headers_in_t *headers_in) { /* {{{ */
-    ngx_str_t                 *content_type, s;
+    ngx_str_t                 *content_type;
     ngx_list_part_t           *part;
     ngx_table_elt_t           *header;
     ngx_uint_t                 i;
@@ -3891,49 +3511,6 @@ static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t *upload_ctx,
 
                 ngx_log_debug1(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
                                "session id %V", &upload_ctx->session_id);
-            }else if(!strncasecmp(CONTENT_RANGE_STRING, (char*)header[i].key.data, sizeof(CONTENT_RANGE_STRING) - 1 - 1) 
-                || !strncasecmp(X_CONTENT_RANGE_STRING, (char*)header[i].key.data, sizeof(X_CONTENT_RANGE_STRING) - 1 - 1))
-            {
-                if(header[i].value.len == 0) {
-                    ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                                   "empty Content-Range in part header");
-                    return NGX_ERROR;
-                }
-
-                if(strncasecmp((char*)header[i].value.data, BYTES_UNIT_STRING, sizeof(BYTES_UNIT_STRING) - 1)) {
-                    ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                                   "unsupported range unit");
-                    return NGX_ERROR;
-                }
-
-                s.data = (u_char*)(char*)header[i].value.data + sizeof(BYTES_UNIT_STRING) - 1;
-                s.len = header[i].value.len - sizeof(BYTES_UNIT_STRING) + 1;
-
-                if(ngx_http_upload_parse_range(&s, &upload_ctx->content_range_n) != NGX_OK) {
-                    ngx_log_debug2(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                                   "invalid range %V (%V)", &s, &header[i].value);
-                    return NGX_ERROR;
-                }
-
-                ngx_log_debug3(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                               "partial content, range %O-%O/%O", upload_ctx->content_range_n.start, 
-                               upload_ctx->content_range_n.end, upload_ctx->content_range_n.total);
-
-                if(ulcf->max_file_size != 0 && upload_ctx->content_range_n.total > ulcf->max_file_size) {
-                    ngx_log_error(NGX_LOG_ERR, upload_ctx->log, 0,
-                                  "entity length is too big");
-                    return NGX_HTTP_REQUEST_ENTITY_TOO_LARGE;
-                }
-
-                if( (upload_ctx->content_range_n.end - upload_ctx->content_range_n.start + 1)
-                    != headers_in->content_length_n) 
-                {
-                    ngx_log_error(NGX_LOG_ERR, upload_ctx->log, 0,
-                                  "range length is not equal to content length");
-                    return NGX_HTTP_RANGE_NOT_SATISFIABLE;
-                }
-
-                upload_ctx->partial_content = 1;
             }
         }
 
