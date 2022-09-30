@@ -487,7 +487,6 @@ static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t* upload_ctx,
  *               NGX_UPLOAD_TOOLARGE field body is too large
  */
 static ngx_int_t upload_process_buf(ngx_http_upload_ctx_t* upload_ctx, u_char* start, u_char* end);
-static ngx_int_t upload_process_raw_buf(ngx_http_upload_ctx_t* upload_ctx, u_char* start, u_char* end);
 
 static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
 
@@ -3223,12 +3222,8 @@ static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload
 
 static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t* upload_ctx, ngx_http_headers_in_t* headers_in) { /* {{{ */
     ngx_str_t* content_type;
-    ngx_list_part_t* part;
-    ngx_table_elt_t* header;
-    ngx_uint_t                 i;
     u_char* mime_type_end_ptr;
     u_char* boundary_start_ptr, * boundary_end_ptr;
-    ngx_atomic_uint_t          boundary;
     ngx_http_upload_loc_conf_t* ulcf;
 
     ulcf = ngx_http_get_module_loc_conf(upload_ctx->request, ngx_http_upload_module);
@@ -3525,37 +3520,6 @@ static ngx_int_t upload_process_buf(ngx_http_upload_ctx_t* upload_ctx, u_char* s
     }
 
     return NGX_OK;
-} /* }}} */
-
-static ngx_int_t
-upload_process_raw_buf(ngx_http_upload_ctx_t* upload_ctx, u_char* start, u_char* end) { /* {{{ */
-    ngx_int_t rc;
-
-    if (start == end) {
-        if (!upload_ctx->discard_data)
-            upload_finish_file(upload_ctx);
-        else
-            upload_abort_file(upload_ctx);
-        return NGX_OK;
-    }
-
-    if (!upload_ctx->started) {
-        rc = upload_start_file(upload_ctx);
-
-        if (rc != NGX_OK) {
-            return rc;
-        }
-
-        upload_ctx->started = 1;
-    }
-
-    if (upload_ctx->flush_output_buffer_f)
-        if (upload_ctx->flush_output_buffer_f(upload_ctx, (void*)start,
-            (size_t)(end - start)) != NGX_OK)
-            upload_ctx->discard_data = 1;
-
-    return NGX_OK;
-
 } /* }}} */
 
 static void /* {{{ ngx_upload_cleanup_handler */
