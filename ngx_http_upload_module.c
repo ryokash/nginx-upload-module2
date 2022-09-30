@@ -395,8 +395,6 @@ static ngx_int_t ngx_http_read_upload_client_request_body(ngx_http_request_t* r)
 static char* ngx_http_upload_set_form_field(ngx_conf_t* cf, ngx_command_t* cmd,
     void* conf);
 static ngx_int_t ngx_http_upload_eval_path(ngx_http_request_t* r);
-static char* ngx_http_upload_pass_form_field(ngx_conf_t* cf, ngx_command_t* cmd,
-    void* conf);
 static char* ngx_http_upload_store_path(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
 static char* ngx_http_upload_cleanup(ngx_conf_t* cf, ngx_command_t* cmd,
     void* conf);
@@ -622,17 +620,6 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
       ngx_http_upload_set_form_field,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_upload_loc_conf_t, aggregate_field_templates),
-      NULL},
-
-    /*
-     * Specifies the field to pass to backend
-     */
-    { ngx_string("upload_pass_form_field"),
-      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_HTTP_LIF_CONF
-                        | NGX_CONF_TAKE1,
-      ngx_http_upload_pass_form_field,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      0,
       NULL},
 
     /*
@@ -2327,81 +2314,6 @@ ngx_http_upload_set_form_field(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
             }
         }
     }
-
-    return NGX_CONF_OK;
-} /* }}} */
-
-static char* /* {{{ ngx_http_upload_pass_form_field */
-ngx_http_upload_pass_form_field(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
-{
-    ngx_http_upload_loc_conf_t* ulcf = conf;
-
-    ngx_str_t* value;
-#if (NGX_PCRE)
-#if defined nginx_version && nginx_version >= 8025
-    ngx_regex_compile_t         rc;
-    u_char                      errstr[NGX_MAX_CONF_ERRSTR];
-#else
-    ngx_int_t                   n;
-    ngx_str_t                  err;
-#endif
-#endif
-    ngx_http_upload_field_filter_t* f;
-
-    value = cf->args->elts;
-
-    if (ulcf->field_filters == NULL) {
-        ulcf->field_filters = ngx_array_create(cf->pool, 1,
-            sizeof(ngx_http_upload_field_filter_t));
-        if (ulcf->field_filters == NULL) {
-            return NGX_CONF_ERROR;
-        }
-    }
-
-    f = ngx_array_push(ulcf->field_filters);
-    if (f == NULL) {
-        return NGX_CONF_ERROR;
-    }
-
-#if (NGX_PCRE)
-#if defined nginx_version && nginx_version >= 8025
-    ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
-
-    rc.pattern = value[1];
-    rc.pool = cf->pool;
-    rc.err.len = NGX_MAX_CONF_ERRSTR;
-    rc.err.data = errstr;
-
-    if (ngx_regex_compile(&rc) != NGX_OK) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "%V", &rc.err);
-        return NGX_CONF_ERROR;
-    }
-
-    f->regex = rc.regex;
-    f->ncaptures = rc.captures;
-#else
-    f->regex = ngx_regex_compile(&value[1], 0, cf->pool, &err);
-
-    if (f->regex == NULL) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "%s", err.data);
-        return NGX_CONF_ERROR;
-    }
-
-    n = ngx_regex_capture_count(f->regex);
-
-    if (n < 0) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-            ngx_regex_capture_count_n " failed for "
-            "pattern \"%V\"", &value[1]);
-        return NGX_CONF_ERROR;
-    }
-
-    f->ncaptures = n;
-#endif
-#else
-    f->text.len = value[1].len;
-    f->text.data = value[1].data;
-#endif
 
     return NGX_CONF_OK;
 } /* }}} */
