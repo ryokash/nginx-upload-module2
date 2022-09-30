@@ -800,6 +800,8 @@ static ngx_http_variable_t  ngx_http_upload_aggregate_variables[] = { /* {{{ */
     { ngx_null_string, NULL, NULL, 0, 0, 0 }
 }; /* }}} */
 
+#define get_context(req) ngx_http_get_module_ctx(req, ngx_http_upload_module)
+
 static ngx_str_t  ngx_http_upload_empty_field_value = ngx_null_string;
 
 static ngx_str_t  ngx_upload_field_part1 = { /* {{{ */
@@ -827,7 +829,7 @@ ngx_http_upload_handler(ngx_http_request_t* r)
 
     ulcf = ngx_http_get_module_loc_conf(r, ngx_http_upload_module);
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     if (u == NULL) {
         u = ngx_pcalloc(r->pool, sizeof(ngx_http_upload_ctx_t));
@@ -965,7 +967,7 @@ ngx_http_upload_read_event_handler(ngx_http_request_t* r)
 
     r->read_event_handler = ngx_http_upload_read_event_handler;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     for (;; ) {
         buf_read_size = 0;
@@ -1113,7 +1115,7 @@ static ngx_int_t ngx_http_upload_options_handler(ngx_http_request_t* r) { /* {{{
 
 static ngx_int_t ngx_http_upload_body_handler(ngx_http_request_t* r) { /* {{{ */
     ngx_http_upload_loc_conf_t* ulcf = ngx_http_get_module_loc_conf(r, ngx_http_upload_module);
-    ngx_http_upload_ctx_t* ctx = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    ngx_http_upload_ctx_t* ctx = get_context(r);
 
     ngx_str_t                   args;
     ngx_uint_t                  flags;
@@ -1952,7 +1954,7 @@ ngx_http_upload_variable(ngx_http_request_t* r,
     v->no_cacheable = 0;
     v->not_found = 0;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     value = (ngx_str_t*)((char*)u + data);
 
@@ -2004,7 +2006,7 @@ ngx_http_upload_md5_variable(ngx_http_request_t* r,
 {
     ngx_http_upload_ctx_t* u;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     if (u->md5_ctx == NULL) {
         v->not_found = 1;
@@ -2019,7 +2021,7 @@ ngx_http_upload_sha1_variable(ngx_http_request_t* r,
 {
     ngx_http_upload_ctx_t* u;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     if (u->sha1_ctx == NULL) {
         v->not_found = 1;
@@ -2035,7 +2037,7 @@ ngx_http_upload_sha256_variable(ngx_http_request_t* r,
 {
     ngx_http_upload_ctx_t* u;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     if (u->sha256_ctx == NULL) {
         v->not_found = 1;
@@ -2051,7 +2053,7 @@ ngx_http_upload_sha512_variable(ngx_http_request_t* r,
 {
     ngx_http_upload_ctx_t* u;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     if (u->sha512_ctx == NULL) {
         v->not_found = 1;
@@ -2069,7 +2071,7 @@ ngx_http_upload_crc32_variable(ngx_http_request_t* r,
     u_char* p;
     uint32_t* value;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     value = (uint32_t*)((char*)u + data);
 
@@ -2095,7 +2097,7 @@ ngx_http_upload_file_size_variable(ngx_http_request_t* r,
     u_char* p;
     off_t* value;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     value = (off_t*)((char*)u + data);
 
@@ -2121,7 +2123,7 @@ ngx_http_upload_content_range_variable_set(ngx_http_request_t* r,
     ngx_str_t                val;
     ngx_http_upload_range_t* value;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     value = (ngx_http_upload_range_t*)((char*)u + data);
 
@@ -2142,7 +2144,7 @@ ngx_http_upload_content_range_variable(ngx_http_request_t* r,
     u_char* p;
     ngx_http_upload_range_t* value;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     value = (ngx_http_upload_range_t*)((char*)u + data);
 
@@ -2168,7 +2170,7 @@ ngx_http_upload_uint_variable(ngx_http_request_t* r,
     u_char* p;
     ngx_uint_t* value;
 
-    u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    u = get_context(r);
 
     value = (ngx_uint_t*)((char*)u + data);
 
@@ -2500,7 +2502,7 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
     ngx_chain_t* cl, ** next;
     ngx_http_request_body_t* rb;
     ngx_http_core_loc_conf_t* clcf;
-    ngx_http_upload_ctx_t* u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    ngx_http_upload_ctx_t* u = get_context(r);
 
 #if defined nginx_version && nginx_version >= 8011
     r->main->count++;
@@ -2667,7 +2669,7 @@ static void /* {{{ ngx_http_read_upload_client_request_body_handler */
 ngx_http_read_upload_client_request_body_handler(ngx_http_request_t* r)
 {
     ngx_int_t  rc;
-    ngx_http_upload_ctx_t* u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    ngx_http_upload_ctx_t* u = get_context(r);
     ngx_event_t* rev = r->connection->read;
     ngx_http_core_loc_conf_t* clcf;
 
@@ -2723,7 +2725,7 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t* r)
     ssize_t                     size, n, limit;
     ngx_connection_t* c;
     ngx_http_request_body_t* rb;
-    ngx_http_upload_ctx_t* u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    ngx_http_upload_ctx_t* u = get_context(r);
     ngx_int_t                  rc;
     ngx_http_core_loc_conf_t* clcf;
     ngx_msec_t                 delay;
@@ -2873,7 +2875,7 @@ static ngx_int_t /* {{{ ngx_http_process_request_body */
 ngx_http_process_request_body(ngx_http_request_t* r, ngx_chain_t* body)
 {
     ngx_int_t rc;
-    ngx_http_upload_ctx_t* u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    ngx_http_upload_ctx_t* u = get_context(r);
 
     // Feed all the buffers into data handler
     while (body) {
