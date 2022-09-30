@@ -228,7 +228,6 @@ typedef struct {
     ngx_array_t* header_templates;
     ngx_flag_t                    forward_args;
     ngx_flag_t                    tame_arrays;
-    ngx_flag_t                    resumable_uploads;
     ngx_flag_t                    empty_field_names;
     size_t                        limit_rate;
 
@@ -681,17 +680,6 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_upload_loc_conf_t, tame_arrays),
-      NULL },
-
-    /*
-     * Specifies whether resumable uploads are allowed
-     */
-    { ngx_string("upload_resumable"),
-      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_HTTP_LIF_CONF
-                        | NGX_CONF_FLAG,
-      ngx_conf_set_flag_slot,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_upload_loc_conf_t, resumable_uploads),
       NULL },
 
     /*
@@ -1820,7 +1808,6 @@ ngx_http_upload_create_loc_conf(ngx_conf_t* cf)
     conf->store_access = NGX_CONF_UNSET_UINT;
     conf->forward_args = NGX_CONF_UNSET;
     conf->tame_arrays = NGX_CONF_UNSET;
-    conf->resumable_uploads = NGX_CONF_UNSET;
     conf->empty_field_names = NGX_CONF_UNSET;
 
     conf->buffer_size = NGX_CONF_UNSET_SIZE;
@@ -1890,11 +1877,6 @@ ngx_http_upload_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child)
     if (conf->tame_arrays == NGX_CONF_UNSET) {
         conf->tame_arrays = (prev->tame_arrays != NGX_CONF_UNSET) ?
             prev->tame_arrays : 0;
-    }
-
-    if (conf->resumable_uploads == NGX_CONF_UNSET) {
-        conf->resumable_uploads = (prev->resumable_uploads != NGX_CONF_UNSET) ?
-            prev->resumable_uploads : 0;
     }
 
     if (conf->empty_field_names == NGX_CONF_UNSET) {
@@ -3263,106 +3245,43 @@ static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t* upload_ctx,
     if (ngx_strncasecmp(content_type->data, (u_char*)MULTIPART_FORM_DATA_STRING,
         sizeof(MULTIPART_FORM_DATA_STRING) - 1)) {
 
-        if (!ulcf->resumable_uploads) {
-            ngx_log_error(NGX_LOG_ERR, upload_ctx->log, 0,
-                "Content-Type is not multipart/form-data and resumable uploads are off: %V", content_type);
-            return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
-        }
-        /*
-         * Content-Type is not multipart/form-data,
-         * look for Content-Disposition header now
-         */
-        part = &headers_in->headers.part;
-        header = part->elts;
-
-        for (i = 0;; i++) {
-            if (i >= part->nelts) {
-                if (part->next == NULL) {
-                    break;
-                }
-
-                part = part->next;
-                header = part->elts;
-                i = 0;
-            }
-
-            if (!strncasecmp(CONTENT_DISPOSITION_STRING, (char*)header[i].key.data, sizeof(CONTENT_DISPOSITION_STRING) - 1 - 1)) {
-                if (upload_parse_content_disposition(upload_ctx, &header[i].value)) {
-                    ngx_log_error(NGX_LOG_INFO, upload_ctx->log, 0,
-                        "invalid Content-Disposition header");
-                    return NGX_ERROR;
-                }
-
-                upload_ctx->is_file = 1;
-                upload_ctx->unencoded = 1;
-                upload_ctx->raw_input = 1;
-
-                upload_ctx->data_handler = upload_process_raw_buf;
-            }
-        }
-
-        if (!upload_ctx->unencoded) {
-            ngx_log_error(NGX_LOG_ERR, upload_ctx->log, 0,
-                "Content-Type is not multipart/form-data and no Content-Disposition header found");
-            return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
-        }
-
-        upload_ctx->content_type = *content_type;
-
-        boundary = ngx_next_temp_number(0);
-
-        content_type->data =
-            ngx_pnalloc(upload_ctx->request->pool,
-                sizeof(MULTIPART_FORM_DATA_STRING "; boundary=") - 1
-                + NGX_ATOMIC_T_LEN);
-
-        if (content_type->data == NULL) {
-            return NGX_ERROR;
-        }
-
-        content_type->len =
-            ngx_sprintf(content_type->data,
-                MULTIPART_FORM_DATA_STRING "; boundary=%0muA",
-                boundary)
-            - content_type->data;
-
-        boundary_start_ptr = content_type->data + sizeof(MULTIPART_FORM_DATA_STRING "; boundary=") - 1;
-        boundary_end_ptr = content_type->data + content_type->len;
+        ngx_log_error(NGX_LOG_ERR, upload_ctx->log, 0,
+            "Content-Type is not multipart/form-data and resumable uploads are off: %V", content_type);
+        return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
     }
-    else {
-        // Find colon in content type string, which terminates mime type
-        mime_type_end_ptr = (u_char*)ngx_strchr(content_type->data, ';');
 
-        upload_ctx->boundary.data = 0;
+    // Find colon in content type string, which terminates mime type
+    mime_type_end_ptr = (u_char*)ngx_strchr(content_type->data, ';');
 
-        if (mime_type_end_ptr == NULL) {
-            ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                "no boundary found in Content-Type");
-            return NGX_UPLOAD_MALFORMED;
-        }
+    upload_ctx->boundary.data = 0;
 
-        boundary_start_ptr = ngx_strstrn(mime_type_end_ptr, BOUNDARY_STRING, sizeof(BOUNDARY_STRING) - 2);
+    if (mime_type_end_ptr == NULL) {
+        ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
+            "no boundary found in Content-Type");
+        return NGX_UPLOAD_MALFORMED;
+    }
 
-        if (boundary_start_ptr == NULL) {
-            ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                "no boundary found in Content-Type");
-            return NGX_UPLOAD_MALFORMED; // No boundary found
-        }
+    boundary_start_ptr = ngx_strstrn(mime_type_end_ptr, BOUNDARY_STRING, sizeof(BOUNDARY_STRING) - 2);
 
-        boundary_start_ptr += sizeof(BOUNDARY_STRING) - 1;
-        boundary_end_ptr = boundary_start_ptr + strcspn((char*)boundary_start_ptr, " ;\n\r");
+    if (boundary_start_ptr == NULL) {
+        ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
+            "no boundary found in Content-Type");
+        return NGX_UPLOAD_MALFORMED; // No boundary found
+    }
 
-        // Handle quoted boundaries
-        if ((boundary_end_ptr - boundary_start_ptr) >= 2 && boundary_start_ptr[0] == '"' && *(boundary_end_ptr - 1) == '"') {
-            boundary_start_ptr++;
-            boundary_end_ptr--;
-        }
+    boundary_start_ptr += sizeof(BOUNDARY_STRING) - 1;
+    boundary_end_ptr = boundary_start_ptr + strcspn((char*)boundary_start_ptr, " ;\n\r");
 
-        if (boundary_end_ptr == boundary_start_ptr) {
-            ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-                "boundary is empty");
-            return NGX_UPLOAD_MALFORMED;
-        }
+    // Handle quoted boundaries
+    if ((boundary_end_ptr - boundary_start_ptr) >= 2 && boundary_start_ptr[0] == '"' && *(boundary_end_ptr - 1) == '"') {
+        boundary_start_ptr++;
+        boundary_end_ptr--;
+    }
+
+    if (boundary_end_ptr == boundary_start_ptr) {
+        ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
+            "boundary is empty");
+        return NGX_UPLOAD_MALFORMED;
     }
 
     // Allocate memory for entire boundary plus \r\n-- plus terminating character
