@@ -142,25 +142,6 @@ typedef struct {
 } ngx_http_upload_range_t;
 
 /*
- * State of range merger
- */
-typedef struct {
-    ngx_buf_t* in_buf;
-    ngx_buf_t* out_buf;
-    ngx_http_upload_range_t  current_range_n;
-    off_t* parser_state;
-    ngx_log_t* log;
-
-    u_char* range_header_buffer;
-    u_char* range_header_buffer_end;
-    u_char** range_header_buffer_pos;
-
-    unsigned int             found_lower_bound : 1;
-    unsigned int             complete_ranges : 1;
-    unsigned int             first_range : 1;
-} ngx_http_upload_merger_state_t;
-
-/*
  * Template for a field to generate in output form
  */
 typedef struct {
