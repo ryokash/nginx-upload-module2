@@ -328,7 +328,6 @@ typedef struct ngx_http_upload_ctx_s {
     unsigned int        first_part : 1;
     unsigned int        discard_data : 1;
     unsigned int        is_file : 1;
-    unsigned int        prevent_output : 1;
     unsigned int        calculate_crc32 : 1;
     unsigned int        started : 1;
     unsigned int        unencoded : 1;
@@ -891,7 +890,6 @@ ngx_http_upload_handler(ngx_http_request_t* r)
     u->chain = u->last = u->checkpoint = NULL;
     u->output_body_len = 0;
 
-    u->prevent_output = 0;
     u->no_content = 1;
     u->limit_rate = ulcf->limit_rate;
     u->received = 0;
@@ -1122,69 +1120,8 @@ static ngx_int_t ngx_http_upload_body_handler(ngx_http_request_t* r) { /* {{{ */
     ngx_int_t                   rc;
     ngx_str_t                   uri;
     ngx_buf_t* b;
-    ngx_chain_t* cl, out;
+    ngx_chain_t* cl;
     ngx_str_t                   dummy = ngx_string("<ngx_upload_module_dummy>");
-    ngx_table_elt_t* h;
-
-    if (ctx->prevent_output) {
-        r->headers_out.status = NGX_HTTP_CREATED;
-
-        /*
-         * Add range header and body
-         */
-        if (ctx->range_header_buffer_pos != ctx->range_header_buffer) {
-            h = ngx_list_push(&r->headers_out.headers);
-            if (h == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            h->hash = 1;
-            h->key.len = sizeof("Range") - 1;
-            h->key.data = (u_char*)"Range";
-            h->value.len = ctx->range_header_buffer_pos - ctx->range_header_buffer;
-            h->value.data = ctx->range_header_buffer;
-
-            b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
-            if (b == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            r->headers_out.content_length_n = h->value.len;
-
-            r->allow_ranges = 0;
-
-            rc = ngx_http_send_header(r);
-
-            if (rc == NGX_ERROR) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            if (rc > NGX_OK) {
-                return rc;
-            }
-
-            b->in_file = 0;
-            b->memory = 1;
-            b->last_buf = b->last_in_chain = b->flush = 1;
-
-            b->start = b->pos = ctx->range_header_buffer;
-            b->last = ctx->range_header_buffer_pos;
-            b->end = ctx->range_header_buffer_end;
-
-            out.buf = b;
-            out.next = NULL;
-
-            ngx_http_finalize_request(r, ngx_http_output_filter(r, &out));
-        }
-        else {
-            r->header_only = 1;
-            r->headers_out.content_length_n = 0;
-
-            ngx_http_finalize_request(r, ngx_http_send_header(r));
-        }
-
-        return NGX_OK;
-    }
 
     if (ulcf->max_output_body_len != 0) {
         if (ctx->output_body_len + ctx->boundary.len + 4 > ulcf->max_output_body_len)
