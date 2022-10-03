@@ -347,7 +347,6 @@ static void ngx_http_upload_read_event_handler(ngx_http_request_t* r);
 #endif
 static ngx_int_t ngx_http_upload_handler(ngx_http_request_t* r);
 static ngx_int_t ngx_http_upload_options_handler(ngx_http_request_t* r);
-static ngx_int_t ngx_http_upload_body_handler(ngx_http_request_t* r);
 
 static void* ngx_http_upload_create_loc_conf(ngx_conf_t* cf);
 static char* ngx_http_upload_merge_loc_conf(ngx_conf_t* cf,
@@ -374,7 +373,7 @@ static ngx_int_t ngx_http_upload_crc32_variable(ngx_http_request_t* r,
 static ngx_int_t ngx_http_upload_uint_variable(ngx_http_request_t* r,
     ngx_http_variable_value_t* v, uintptr_t data);
 static char* ngx_http_upload_module_init(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
-static char* ngx_http_upload_pass(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
+static ngx_int_t upload_done(ngx_http_request_t* r, ngx_array_t* files);
 
 static ngx_int_t
 ngx_http_upload_process_field_templates(ngx_http_request_t* r,
@@ -499,17 +498,6 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_HTTP_LIF_CONF
                         | NGX_CONF_NOARGS,
       ngx_http_upload_module_init,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      0,
-      NULL },
-
-    /*
-     * Enables uploads for location and specifies location to pass modified request to
-     */
-    { ngx_string("upload_pass"),
-      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_HTTP_LIF_CONF
-                        | NGX_CONF_TAKE1,
-      ngx_http_upload_pass,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
       NULL },
@@ -1116,136 +1104,6 @@ static ngx_int_t ngx_http_upload_options_handler(ngx_http_request_t* r) { /* {{{
     r->allow_ranges = 0;
 
     return ngx_http_send_header(r);
-} /* }}} */
-
-static ngx_int_t ngx_http_upload_body_handler(ngx_http_request_t* r) { /* {{{ */
-    ngx_http_upload_loc_conf_t* ulcf = ngx_http_get_module_loc_conf(r, ngx_http_upload_module);
-    ngx_http_upload_ctx_t* ctx = get_context(r);
-
-    ngx_str_t                   args;
-    ngx_uint_t                  flags;
-    ngx_int_t                   rc;
-    ngx_str_t                   uri;
-    ngx_buf_t* b;
-    ngx_chain_t* cl;
-    ngx_str_t                   dummy = ngx_string("<ngx_upload_module_dummy>");
-
-    if (ulcf->max_output_body_len != 0) {
-        if (ctx->output_body_len + ctx->boundary.len + 4 > ulcf->max_output_body_len)
-            return NGX_HTTP_REQUEST_ENTITY_TOO_LARGE;
-    }
-
-    if (ctx->no_content) {
-        rc = ngx_http_upload_append_field(ctx, &dummy, &ngx_http_upload_empty_field_value);
-
-        if (rc != NGX_OK) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-    }
-
-    /*
-     * Append final boundary
-     */
-    b = ngx_create_temp_buf(r->pool, ctx->boundary.len + 4);
-
-    if (b == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    cl = ngx_alloc_chain_link(r->pool);
-    if (cl == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    b->last_in_chain = 1;
-    b->last_buf = 1;
-
-    cl->buf = b;
-    cl->next = NULL;
-
-    if (ctx->chain == NULL) {
-        ctx->chain = cl;
-        ctx->last = cl;
-    }
-    else {
-        ctx->last->next = cl;
-        ctx->last = cl;
-    }
-
-    b->last = ngx_cpymem(b->last, ctx->boundary.data, ctx->boundary.len);
-
-    *b->last++ = '-';
-    *b->last++ = '-';
-    *b->last++ = CR;
-    *b->last++ = LF;
-
-    if (ulcf->url_cv) {
-        /* complex value */
-        if (ngx_http_complex_value(r, ulcf->url_cv, &uri) != NGX_OK) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-
-        if (uri.len == 0) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                "empty \"upload_pass\" (was: \"%V\")",
-                &ulcf->url_cv->value);
-
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-    }
-    else {
-        /* simple value */
-        uri = ulcf->url;
-    }
-
-    if (ulcf->forward_args) {
-        args = r->args; /* forward the query args */
-    }
-    else {
-        args.len = 0;
-        args.data = NULL;
-    }
-
-    flags = 0;
-
-    if (ngx_http_parse_unsafe_uri(r, &uri, &args, &flags) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    r->request_body->bufs = ctx->chain;
-
-    // Recalculate content length
-    r->headers_in.content_length_n = 0;
-
-    for (cl = ctx->chain; cl; cl = cl->next)
-        r->headers_in.content_length_n += (cl->buf->last - cl->buf->pos);
-
-    r->headers_in.content_length->value.data = ngx_palloc(r->pool, NGX_OFF_T_LEN);
-
-    if (r->headers_in.content_length->value.data == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    r->headers_in.content_length->value.len =
-        ngx_sprintf(r->headers_in.content_length->value.data, "%O", r->headers_in.content_length_n)
-        - r->headers_in.content_length->value.data;
-
-#if defined nginx_version && nginx_version >= 8011
-    r->main->count--;
-#endif
-
-    if (uri.len != 0 && uri.data[0] == '/') {
-        rc = ngx_http_internal_redirect(r, &uri, &args);
-    }
-    else {
-        rc = ngx_http_named_location(r, &uri);
-    }
-
-    if (rc == NGX_ERROR) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    return rc;
 } /* }}} */
 
 static ngx_int_t
@@ -2385,57 +2243,6 @@ ngx_http_upload_module_init(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
     return NGX_CONF_OK;
 } /* }}} */
 
-static char* /* {{{ ngx_http_upload_pass */
-ngx_http_upload_pass(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
-{
-    //ngx_http_core_loc_conf_t          *clcf;
-    ngx_http_upload_loc_conf_t* ulcf = conf;
-    ngx_str_t* value;
-    ngx_http_compile_complex_value_t   ccv;
-
-    if ((ulcf->url.len != 0) || (ulcf->url_cv != NULL)) {
-        return "is duplicate";
-    }
-
-    value = cf->args->elts;
-
-    if (value[1].len == 0) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-            "empty value in \"%V\" directive",
-            &cmd->name);
-
-        return NGX_CONF_ERROR;
-    }
-
-    //clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
-    //clcf->handler = ngx_http_upload_handler;
-
-    if (ngx_http_script_variables_count(&value[1])) {
-        /* complex value */
-        ulcf->url_cv = ngx_palloc(cf->pool, sizeof(ngx_http_complex_value_t));
-        if (ulcf->url_cv == NULL) {
-            return NGX_CONF_ERROR;
-        }
-
-        ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
-
-        ccv.cf = cf;
-        ccv.value = &value[1];
-        ccv.complex_value = ulcf->url_cv;
-
-        if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
-            return NGX_CONF_ERROR;
-        }
-    }
-    else {
-        /* simple value */
-        ulcf->url = value[1];
-    }
-
-    return NGX_CONF_OK;
-} /* }}} */
-
-
 static char*
 ngx_http_upload_store_path(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
@@ -2555,8 +2362,8 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
             }
 
             upload_shutdown_ctx(u);
-
-            return ngx_http_upload_body_handler(r);
+            
+            return NGX_DONE;
         }
 
         /*
@@ -2843,9 +2650,50 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t* r)
     }
 
     upload_shutdown_ctx(u);
-
-    return ngx_http_upload_body_handler(r);
+    return upload_done(r, u->files_uploaded);
 } /* }}} */
+
+static ngx_int_t upload_done(ngx_http_request_t* r, ngx_array_t* files)
+{
+    const char* content_type = "text/plain";
+    const char* text = "upload completed successfully";
+
+    ngx_int_t rc;
+
+    ngx_http_headers_out_t* hs = &r->headers_out;
+    hs->content_type.len = strlen(content_type);
+    hs->content_type.data = (u_char*)content_type;
+    hs->status = NGX_HTTP_OK;
+    hs->content_length_n = strlen(text);
+
+    ngx_buf_t* buf = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
+    if (buf == NULL)
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+
+    ngx_chain_t out = { buf, NULL };
+    u_char* buff = ngx_palloc(r->pool, hs->content_length_n);
+    if (buff == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Failed to allocate memory.");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    ngx_memcpy(buff, text, hs->content_length_n);
+
+    buf->pos = buff;
+    buf->last = buff + hs->content_length_n;
+    buf->memory = 1;
+    buf->last_buf = 1;
+
+    rc = ngx_http_send_header(r);
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only)
+        return rc;
+
+    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "handle sem suggest GET");
+
+    rc = ngx_http_output_filter(r, &out);
+    if (rc < NGX_HTTP_SPECIAL_RESPONSE)
+        ngx_http_finalize_request(r, rc);
+    return rc;
+}
 
 static ngx_int_t /* {{{ ngx_http_process_request_body */
 ngx_http_process_request_body(ngx_http_request_t* r, ngx_chain_t* body)
