@@ -70,6 +70,7 @@ typedef struct stat stat_t;
 #define ngx_unlock_fd(fd)
 #define strncasecmp(s1, s2, size) _strnicmp((char*)s1, (char*)s2, size)
 
+#if 0
 #pragma warning(push)
 #pragma warning(disable: 4293)
 // TODO: check errors
@@ -95,6 +96,7 @@ int ftruncate(HANDLE fd, _off_t length)
     return 0;
 }
 #pragma warning(pop)
+#endif
 
 #endif
 
@@ -266,6 +268,13 @@ struct ngx_http_upload_ctx_s;
 typedef ngx_int_t(*ngx_http_request_body_data_handler_pt)
 (struct ngx_http_upload_ctx_s*, u_char*, u_char*);
 
+
+typedef struct ngx_http_uploaded_file_s {
+    ngx_str_t original_name;
+    ngx_str_t stored_name;
+}
+ngx_http_uploaded_file_t;
+
 /*
  * Upload module context
  */
@@ -285,6 +294,8 @@ typedef struct ngx_http_upload_ctx_s {
     ngx_str_t           content_type;
     ngx_str_t           content_range;
     ngx_http_upload_range_t     content_range_n;
+
+    ngx_array_t*        files_uploaded;
 
     ngx_uint_t          ordinal;
 
@@ -334,6 +345,19 @@ typedef struct ngx_http_upload_ctx_s {
     unsigned int        no_content : 1;
     unsigned int        raw_input : 1;
 } ngx_http_upload_ctx_t;
+
+#if 0
+static int ngx_casecmp(ngx_str_t s1, ngx_str_t s2)
+{
+    int clen = min(s1.len, s2.len);
+    int cmp = ngx_strncasecmp(s1.data, s2.data, clen);
+    
+    if (cmp == 0 && s1.len != s2.len)
+        cmp = s1.len > s2.len ? 1 : -1;
+
+    return cmp;
+}
+#endif
 
 static ngx_int_t ngx_http_upload_test_expect(ngx_http_request_t* r);
 
@@ -895,6 +919,8 @@ ngx_http_upload_handler(ngx_http_request_t* r)
     u->received = 0;
     u->ordinal = 0;
 
+    u->files_uploaded = ngx_array_create(r->pool, 4, sizeof(ngx_http_uploaded_file_t));
+
     upload_init_ctx(u);
 
     rc = upload_parse_request_headers(u, &r->headers_in);
@@ -1264,6 +1290,32 @@ ngx_http_upload_process_field_templates(
     return NGX_OK;
 }
 
+static ngx_str_t ngx_stringf(ngx_pool_t* pool, const char* fmt, ...)
+{
+    const ngx_str_t err = {0, NULL};
+
+    va_list args;
+    va_start(args, fmt);
+
+    int size = vsnprintf(NULL, 0, fmt, args);
+    if (size < 0) {
+        va_end(args);
+        return err;
+    }
+
+    ngx_str_t ret = { size, ngx_pcalloc(pool, size + 1) };
+    if (ret.data == NULL) {
+        va_end(args);
+        return err;
+    }
+
+    vsnprintf((char*)ret.data, size + 1, fmt, args);
+
+    va_end(args);
+
+    return ret;
+}
+
 static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t* u) { /* {{{ */
     ngx_http_request_t* r = u->request;
     ngx_http_upload_loc_conf_t* ulcf = ngx_http_get_module_loc_conf(r, ngx_http_upload_module);
@@ -1324,6 +1376,12 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t* u) { /* {{
             return NGX_UPLOAD_IOERROR;
         }
 
+        {
+            ngx_http_uploaded_file_t* _f = ngx_array_push(u->files_uploaded);
+            _f->original_name = u->file_name;
+            _f->stored_name = ngx_stringf(r->pool, "%020" PRIu64 "%03d", timestamp, n);
+        }
+            
         u->cln->handler = ngx_upload_cleanup_handler;
 
         ucln = u->cln->data;
