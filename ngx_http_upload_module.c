@@ -442,14 +442,13 @@ static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload
  * content disposition
  *
  * Parameters:
- *     upload_ctx -- upload context to populate
- *     headers_in -- request headers
+ *     r -- http request
  *
  * Return value:
  *     NGX_OK on success
  *     NGX_ERROR if error has occured
  */
-static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t* upload_ctx, ngx_http_headers_in_t* headers_in);
+static ngx_int_t upload_parse_request_headers(ngx_http_request_t* upload_ctx);
 
 /*
  * upload_process_buf
@@ -838,7 +837,7 @@ ngx_http_upload_handler(ngx_http_request_t* r)
 
     upload_init_ctx(u);
 
-    rc = upload_parse_request_headers(u, &r->headers_in);
+    rc = upload_parse_request_headers(r);
 
     if (rc != NGX_OK) {
         upload_shutdown_ctx(u);
@@ -2852,13 +2851,13 @@ static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload
     return NGX_OK;
 } /* }}} */
 
-static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t* upload_ctx, ngx_http_headers_in_t* headers_in) { /* {{{ */
+static ngx_int_t upload_parse_request_headers(ngx_http_request_t* r) { /* {{{ */
     ngx_str_t* content_type;
     u_char* mime_type_end_ptr;
     u_char* boundary_start_ptr, * boundary_end_ptr;
-    ngx_http_upload_loc_conf_t* ulcf;
-
-    ulcf = ngx_http_get_module_loc_conf(upload_ctx->request, ngx_http_upload_module);
+    
+    ngx_http_upload_ctx_t* upload_ctx = get_context(r);
+    ngx_http_headers_in_t* headers_in = &r->headers_in;
 
     // Check whether Content-Type header is missing
     if (headers_in->content_type == NULL) {
@@ -2913,7 +2912,7 @@ static ngx_int_t upload_parse_request_headers(ngx_http_upload_ctx_t* upload_ctx,
 
     // Allocate memory for entire boundary plus \r\n-- plus terminating character
     upload_ctx->boundary.len = boundary_end_ptr - boundary_start_ptr + 4;
-    upload_ctx->boundary.data = ngx_palloc(upload_ctx->request->pool, upload_ctx->boundary.len + 1);
+    upload_ctx->boundary.data = ngx_palloc(r->pool, upload_ctx->boundary.len + 1);
 
     if (upload_ctx->boundary.data == NULL)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
