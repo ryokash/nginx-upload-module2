@@ -153,14 +153,6 @@ typedef struct {
 } ngx_http_upload_field_template_t;
 
 /*
- * Template for a header
- */
-typedef struct {
-    ngx_http_complex_value_t* name;
-    ngx_http_complex_value_t* value;
-} ngx_http_upload_header_template_t;
-
-/*
  * Filter for fields in output form
  */
 typedef struct {
@@ -171,12 +163,6 @@ typedef struct {
     ngx_str_t                text;
 #endif
 } ngx_http_upload_field_filter_t;
-
-typedef struct {
-    ngx_path_t* path;
-    ngx_http_complex_value_t    dynamic;
-    unsigned                    is_dynamic : 1;
-} ngx_http_upload_path_t;
 
 /*
  * Upload cleanup record
