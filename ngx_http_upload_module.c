@@ -3269,7 +3269,7 @@ ngx_upload_cleanup_handler(void* data)
     u_char                      do_cleanup = 0;
 
     if (!cln->aborted) {
-        if (cln->fd >= 0) {
+        if (cln->fd != NGX_INVALID_FILE) {
             if (ngx_close_file(cln->fd) == NGX_FILE_ERROR) {
                 ngx_log_error(NGX_LOG_ALERT, cln->log, ngx_errno,
                     ngx_close_file_n " \"%s\" failed", cln->filename);
