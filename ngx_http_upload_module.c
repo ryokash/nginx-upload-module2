@@ -200,7 +200,6 @@ typedef struct {
     ngx_uint_t                    store_access;
     size_t                        buffer_size;
     size_t                        merge_buffer_size;
-    size_t                        range_header_buffer_size;
     size_t                        max_header_len;
     size_t                        max_output_body_len;
     off_t                         max_file_size;
@@ -284,9 +283,6 @@ typedef struct ngx_http_upload_ctx_s {
     u_char* output_buffer_end;
     u_char* output_buffer_pos;
     u_char* merge_buffer;
-    u_char* range_header_buffer;
-    u_char* range_header_buffer_pos;
-    u_char* range_header_buffer_end;
 
     ngx_http_request_body_data_handler_pt data_handler;
 
@@ -545,17 +541,6 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
       ngx_conf_set_size_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_upload_loc_conf_t, merge_buffer_size),
-      NULL },
-
-    /*
-     * Specifies the size of buffer, which will be used
-     * for returning range header
-     */
-    { ngx_string("upload_range_header_buffer_size"),
-      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
-      ngx_conf_set_size_slot,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_upload_loc_conf_t, range_header_buffer_size),
       NULL },
 
     /*
@@ -1634,7 +1619,6 @@ ngx_http_upload_create_loc_conf(ngx_conf_t* cf)
 
     conf->buffer_size = NGX_CONF_UNSET_SIZE;
     conf->merge_buffer_size = NGX_CONF_UNSET_SIZE;
-    conf->range_header_buffer_size = NGX_CONF_UNSET_SIZE;
     conf->max_header_len = NGX_CONF_UNSET_SIZE;
     conf->max_output_body_len = NGX_CONF_UNSET_SIZE;
     conf->max_file_size = NGX_CONF_UNSET;
@@ -1672,10 +1656,6 @@ ngx_http_upload_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child)
     ngx_conf_merge_size_value(conf->merge_buffer_size,
         prev->merge_buffer_size,
         (size_t)ngx_pagesize >> 1);
-
-    ngx_conf_merge_size_value(conf->range_header_buffer_size,
-        prev->range_header_buffer_size,
-        (size_t)256);
 
     ngx_conf_merge_size_value(conf->max_header_len,
         prev->max_header_len,
@@ -2942,14 +2922,6 @@ static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload
 
     upload_ctx->output_buffer_pos = upload_ctx->output_buffer;
     upload_ctx->output_buffer_end = upload_ctx->output_buffer + ulcf->buffer_size;
-
-    upload_ctx->range_header_buffer = ngx_pcalloc(upload_ctx->request->pool, ulcf->range_header_buffer_size);
-
-    if (upload_ctx->range_header_buffer == NULL)
-        return NGX_ERROR;
-
-    upload_ctx->range_header_buffer_pos = upload_ctx->range_header_buffer;
-    upload_ctx->range_header_buffer_end = upload_ctx->range_header_buffer + ulcf->range_header_buffer_size;
 
     upload_ctx->first_part = 1;
 
