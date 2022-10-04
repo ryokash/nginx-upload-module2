@@ -199,7 +199,6 @@ typedef struct {
     ngx_str_t                     store_path;
     ngx_uint_t                    store_access;
     size_t                        buffer_size;
-    size_t                        merge_buffer_size;
     size_t                        max_header_len;
     size_t                        max_output_body_len;
     off_t                         max_file_size;
@@ -282,7 +281,6 @@ typedef struct ngx_http_upload_ctx_s {
     u_char* output_buffer;
     u_char* output_buffer_end;
     u_char* output_buffer_pos;
-    u_char* merge_buffer;
 
     ngx_http_request_body_data_handler_pt data_handler;
 
@@ -530,17 +528,6 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
       ngx_conf_set_size_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_upload_loc_conf_t, buffer_size),
-      NULL },
-
-    /*
-     * Specifies the size of buffer, which will be used
-     * for merging ranges into state file
-     */
-    { ngx_string("upload_merge_buffer_size"),
-      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
-      ngx_conf_set_size_slot,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_upload_loc_conf_t, merge_buffer_size),
       NULL },
 
     /*
@@ -1618,7 +1605,6 @@ ngx_http_upload_create_loc_conf(ngx_conf_t* cf)
     conf->empty_field_names = NGX_CONF_UNSET;
 
     conf->buffer_size = NGX_CONF_UNSET_SIZE;
-    conf->merge_buffer_size = NGX_CONF_UNSET_SIZE;
     conf->max_header_len = NGX_CONF_UNSET_SIZE;
     conf->max_output_body_len = NGX_CONF_UNSET_SIZE;
     conf->max_file_size = NGX_CONF_UNSET;
@@ -1652,10 +1638,6 @@ ngx_http_upload_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child)
     ngx_conf_merge_size_value(conf->buffer_size,
         prev->buffer_size,
         (size_t)ngx_pagesize);
-
-    ngx_conf_merge_size_value(conf->merge_buffer_size,
-        prev->merge_buffer_size,
-        (size_t)ngx_pagesize >> 1);
 
     ngx_conf_merge_size_value(conf->max_header_len,
         prev->max_header_len,
