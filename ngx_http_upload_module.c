@@ -2943,8 +2943,6 @@ static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload
     upload_ctx->output_buffer_pos = upload_ctx->output_buffer;
     upload_ctx->output_buffer_end = upload_ctx->output_buffer + ulcf->buffer_size;
 
-    upload_ctx->header_accumulator_pos = upload_ctx->header_accumulator;
-
     upload_ctx->range_header_buffer = ngx_pcalloc(upload_ctx->request->pool, ulcf->range_header_buffer_size);
 
     if (upload_ctx->range_header_buffer == NULL)
