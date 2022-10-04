@@ -202,7 +202,6 @@ typedef struct {
     size_t                        max_header_len;
     size_t                        max_output_body_len;
     off_t                         max_file_size;
-    ngx_array_t* field_templates;
     ngx_array_t* aggregate_field_templates;
     ngx_array_t* field_filters;
     ngx_array_t* cleanup_statuses;
@@ -564,17 +563,6 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
       NULL },
 
     /*
-     * Specifies the field to set in altered response body
-     */
-    { ngx_string("upload_set_form_field"),
-      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_HTTP_LIF_CONF
-                        | NGX_CONF_TAKE2,
-      ngx_http_upload_set_form_field,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_upload_loc_conf_t, field_templates),
-      NULL},
-
-    /*
      * Specifies the field with aggregate parameters
      * to set in altered response body
      */
@@ -635,7 +623,7 @@ static ngx_command_t  ngx_http_upload_commands[] = { /* {{{ */
     /*
      * Specifies whether empty field names are allowed
      */
-    { ngx_string("upload_empty_fiels_names"),
+    { ngx_string("upload_empty_field_names"),
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_HTTP_LIF_CONF
                         | NGX_CONF_FLAG,
       ngx_conf_set_flag_slot,
@@ -1137,9 +1125,7 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t* u) { /* {{
     ngx_uint_t  i;
     ngx_int_t   rc;
     ngx_err_t   err;
-    ngx_http_upload_field_template_t* t;
     ngx_http_upload_field_filter_t* f;
-    ngx_str_t   field_name, field_value;
     ngx_uint_t  pass_field;
     ngx_upload_cleanup_t* ucln;
 
@@ -1202,29 +1188,6 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t* u) { /* {{
         ucln->headers_out = &r->headers_out;
         ucln->cleanup_statuses = ulcf->cleanup_statuses;
         ucln->aborted = 0;
-
-        if (ulcf->field_templates) {
-
-            if (ulcf->tame_arrays && u->field_name.len > 2 &&
-                u->field_name.data[u->field_name.len - 1] == ']' &&
-                u->field_name.data[u->field_name.len - 2] == '[')
-            {
-                u->field_name.len -= 2;
-            }
-
-            t = ulcf->field_templates->elts;
-            for (i = 0; i < ulcf->field_templates->nelts; i++) {
-                rc = ngx_http_upload_process_field_templates(r, &t[i], &field_name, &field_value);
-
-                if (rc != NGX_OK)
-                    goto cleanup_file;
-
-                rc = ngx_http_upload_append_field(u, &field_name, &field_value);
-
-                if (rc != NGX_OK)
-                    goto cleanup_file;
-            }
-        }
 
         if (u->md5_ctx != NULL)
             MD5Init(&u->md5_ctx->md5);
@@ -1298,9 +1261,6 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t* u) { /* {{
     }
 
     return NGX_OK;
-
-cleanup_file:
-    return rc;
 } /* }}} */
 
 
@@ -1666,10 +1626,6 @@ ngx_http_upload_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child)
     if (conf->empty_field_names == NGX_CONF_UNSET) {
         conf->empty_field_names = (prev->empty_field_names != NGX_CONF_UNSET) ?
             prev->empty_field_names : 0;
-    }
-
-    if (conf->field_templates == NULL) {
-        conf->field_templates = prev->field_templates;
     }
 
     if (conf->aggregate_field_templates == NULL) {
