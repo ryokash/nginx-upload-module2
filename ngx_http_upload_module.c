@@ -2095,16 +2095,12 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
         return NGX_OK;
 
     rb = ngx_pcalloc(r->pool, sizeof(ngx_http_request_body_t));
-    if (rb == NULL) {
-        upload_shutdown_ctx(u);
+    if (rb == NULL)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
     r->request_body = rb;
 
-    if (r->headers_in.content_length_n <= 0) {
-        upload_shutdown_ctx(u);
+    if (r->headers_in.content_length_n <= 0)
         return NGX_HTTP_BAD_REQUEST;
-    }
 
     /*
      * set by ngx_pcalloc():
@@ -2124,10 +2120,8 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
         u->received = preread;
 
         b = ngx_calloc_buf(r->pool);
-        if (b == NULL) {
-            upload_shutdown_ctx(u);
+        if (b == NULL)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
 
         b->temporary = 1;
         b->start = r->header_in->pos;
@@ -2136,10 +2130,8 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
         b->end = r->header_in->end;
 
         rb->bufs = ngx_alloc_chain_link(r->pool);
-        if (rb->bufs == NULL) {
-            upload_shutdown_ctx(u);
+        if (rb->bufs == NULL)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
 
         rb->bufs->buf = b;
         rb->bufs->next = NULL;
@@ -2152,13 +2144,10 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
             r->header_in->pos += r->headers_in.content_length_n;
             r->request_length += r->headers_in.content_length_n;
 
-            if (ngx_http_process_request_body(r, rb->bufs) != NGX_OK) {
-                upload_shutdown_ctx(u);
+            if (ngx_http_process_request_body(r, rb->bufs) != NGX_OK)
                 return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
 
-            upload_shutdown_ctx(u);
-            
+            upload_shutdown_ctx(u);            
             return NGX_DONE;
         }
 
@@ -2213,16 +2202,12 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
     }
 
     rb->buf = ngx_create_temp_buf(r->pool, size);
-    if (rb->buf == NULL) {
-        upload_shutdown_ctx(u);
+    if (rb->buf == NULL)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
 
     cl = ngx_alloc_chain_link(r->pool);
-    if (cl == NULL) {
-        upload_shutdown_ctx(u);
+    if (cl == NULL)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
 
     cl->buf = rb->buf;
     cl->next = NULL;
