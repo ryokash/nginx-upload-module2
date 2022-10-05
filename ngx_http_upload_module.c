@@ -433,7 +433,7 @@ static void upload_shutdown_ctx(ngx_http_upload_ctx_t* upload_ctx);
  *               NGX_ERROR if error has occured
  *
  */
-static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload_loc_conf_t* ulcf);
+static ngx_int_t setup_context(ngx_http_request_t* r);
 
 /*
  * upload_parse_request_headers
@@ -737,7 +737,8 @@ static ngx_http_variable_t  ngx_http_upload_aggregate_variables[] = { /* {{{ */
     { ngx_null_string, NULL, NULL, 0, 0, 0 }
 }; /* }}} */
 
-#define get_context(req) ngx_http_get_module_ctx(req, ngx_http_upload_module)
+#define get_context(req) ngx_http_get_module_ctx((req), ngx_http_upload_module)
+#define get_loc_conf(req) ngx_http_get_module_loc_conf((req), ngx_http_upload_module);
 
 static ngx_str_t  ngx_http_upload_empty_field_value = ngx_null_string;
 
@@ -754,8 +755,6 @@ static ngx_str_t  ngx_upload_field_part2 = { /* {{{ */
 static ngx_int_t /* {{{ ngx_http_upload_handler */
 ngx_http_upload_handler(ngx_http_request_t* r)
 {
-    ngx_http_upload_loc_conf_t* ulcf;
-    ngx_http_upload_ctx_t* u;
     ngx_int_t                 rc;
 
     if (r->method & NGX_HTTP_OPTIONS)
@@ -764,95 +763,19 @@ ngx_http_upload_handler(ngx_http_request_t* r)
     if (!(r->method & NGX_HTTP_POST))
         return NGX_HTTP_NOT_ALLOWED;
 
-    ulcf = ngx_http_get_module_loc_conf(r, ngx_http_upload_module);
+    if (setup_context(r) != NGX_OK)
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
 
-    u = get_context(r);
-
-    if (u == NULL) {
-        u = ngx_pcalloc(r->pool, sizeof(ngx_http_upload_ctx_t));
-        if (u == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-
-        ngx_http_set_ctx(r, u, ngx_http_upload_module);
-    }
-
-    if (ulcf->md5) {
-        if (u->md5_ctx == NULL) {
-            u->md5_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_md5_ctx_t));
-            if (u->md5_ctx == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-        }
-    }
-    else
-        u->md5_ctx = NULL;
-
-    if (ulcf->sha1) {
-        if (u->sha1_ctx == NULL) {
-            u->sha1_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_sha1_ctx_t));
-            if (u->sha1_ctx == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-        }
-    }
-    else
-        u->sha1_ctx = NULL;
-
-    if (ulcf->sha256) {
-        if (u->sha256_ctx == NULL) {
-            u->sha256_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_sha256_ctx_t));
-            if (u->sha256_ctx == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-        }
-    }
-    else
-        u->sha256_ctx = NULL;
-
-    if (ulcf->sha512) {
-        if (u->sha512_ctx == NULL) {
-            u->sha512_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_sha512_ctx_t));
-            if (u->sha512_ctx == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-        }
-    }
-    else
-        u->sha512_ctx = NULL;
-
-    u->calculate_crc32 = ulcf->crc32;
-
-    u->request = r;
-    u->log = r->connection->log;
-    u->chain = u->last = u->checkpoint = NULL;
-    u->output_body_len = 0;
-
-    u->no_content = 1;
-    u->limit_rate = ulcf->limit_rate;
-    u->received = 0;
-    u->ordinal = 0;
-
-    u->files_uploaded = ngx_array_create(r->pool, 4, sizeof(ngx_http_uploaded_file_t));
-
-    upload_init_ctx(u);
-
-    rc = upload_parse_request_headers(r);
-
-    if (rc != NGX_OK) {
-        upload_shutdown_ctx(u);
+    if ((rc = upload_parse_request_headers(r)) != NGX_OK) {
+        upload_shutdown_ctx(get_context(r));
         return rc;
     }
 
-    u->store_path = ulcf->store_path; // TODO: is ngx_str_t assignable?
-
     if (ngx_http_upload_test_expect(r) != NGX_OK) {
-        upload_shutdown_ctx(u);
+        upload_shutdown_ctx(get_context(r));
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (upload_start(u, ulcf) != NGX_OK)
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
 
 #if (NGX_HTTP_V2)
     if (r->stream) {
@@ -2826,27 +2749,91 @@ static void upload_shutdown_ctx(ngx_http_upload_ctx_t* upload_ctx) { /* {{{ */
     }
 } /* }}} */
 
-static ngx_int_t upload_start(ngx_http_upload_ctx_t* upload_ctx, ngx_http_upload_loc_conf_t* ulcf) { /* {{{ */
-    if (upload_ctx == NULL)
+
+static ngx_int_t setup_context(ngx_http_request_t* r) { /* {{{ */
+    ngx_http_upload_loc_conf_t* ulcf = get_loc_conf(r);
+    ngx_http_upload_ctx_t* u = get_context(r);
+
+    if (u == NULL) {
+        u = ngx_pcalloc(r->pool, sizeof(ngx_http_upload_ctx_t));
+        if (u == NULL)
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        ngx_http_set_ctx(r, u, ngx_http_upload_module);
+    }
+
+    if (ulcf->md5) {
+        if (u->md5_ctx == NULL) {
+            u->md5_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_md5_ctx_t));
+            if (u->md5_ctx == NULL)
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+    else
+        u->md5_ctx = NULL;
+
+    if (ulcf->sha1) {
+        if (u->sha1_ctx == NULL) {
+            u->sha1_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_sha1_ctx_t));
+            if (u->sha1_ctx == NULL)
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+    else
+        u->sha1_ctx = NULL;
+
+    if (ulcf->sha256) {
+        if (u->sha256_ctx == NULL) {
+            u->sha256_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_sha256_ctx_t));
+            if (u->sha256_ctx == NULL)
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+    else
+        u->sha256_ctx = NULL;
+
+    if (ulcf->sha512) {
+        if (u->sha512_ctx == NULL) {
+            u->sha512_ctx = ngx_palloc(r->pool, sizeof(ngx_http_upload_sha512_ctx_t));
+            if (u->sha512_ctx == NULL)
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+    else
+        u->sha512_ctx = NULL;
+
+    u->calculate_crc32 = ulcf->crc32;
+
+    u->request = r;
+    u->log = r->connection->log;
+    u->chain = u->last = u->checkpoint = NULL;
+    u->output_body_len = 0;
+
+    u->no_content = 1;
+    u->limit_rate = ulcf->limit_rate;
+    u->received = 0;
+    u->ordinal = 0;
+
+    u->files_uploaded = ngx_array_create(r->pool, 4, sizeof(ngx_http_uploaded_file_t));
+
+    upload_init_ctx(u);
+
+    u->store_path = ulcf->store_path; // TODO: is ngx_str_t assignable?
+
+    u->header_accumulator = ngx_pcalloc(r->pool, ulcf->max_header_len + 1);
+    if (u->header_accumulator == NULL)
         return NGX_ERROR;
 
-    upload_ctx->header_accumulator = ngx_pcalloc(upload_ctx->request->pool, ulcf->max_header_len + 1);
+    u->header_accumulator_pos = u->header_accumulator;
+    u->header_accumulator_end = u->header_accumulator + ulcf->max_header_len;
 
-    if (upload_ctx->header_accumulator == NULL)
+    u->output_buffer = ngx_pcalloc(r->pool, ulcf->buffer_size);
+    if (u->output_buffer == NULL)
         return NGX_ERROR;
 
-    upload_ctx->header_accumulator_pos = upload_ctx->header_accumulator;
-    upload_ctx->header_accumulator_end = upload_ctx->header_accumulator + ulcf->max_header_len;
+    u->output_buffer_pos = u->output_buffer;
+    u->output_buffer_end = u->output_buffer + ulcf->buffer_size;
 
-    upload_ctx->output_buffer = ngx_pcalloc(upload_ctx->request->pool, ulcf->buffer_size);
-
-    if (upload_ctx->output_buffer == NULL)
-        return NGX_ERROR;
-
-    upload_ctx->output_buffer_pos = upload_ctx->output_buffer;
-    upload_ctx->output_buffer_end = upload_ctx->output_buffer + ulcf->buffer_size;
-
-    upload_ctx->first_part = 1;
+    u->first_part = 1;
 
     return NGX_OK;
 } /* }}} */
