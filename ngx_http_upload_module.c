@@ -763,8 +763,8 @@ ngx_http_upload_handler(ngx_http_request_t* r)
     if (!(r->method & NGX_HTTP_POST))
         return NGX_HTTP_NOT_ALLOWED;
 
-    if (setup_context(r) != NGX_OK)
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    if ((rc = setup_context(r)) != NGX_OK)
+        return rc;
 
     if ((rc = upload_parse_request_headers(r)) != NGX_OK) {
         upload_shutdown_ctx(get_context(r));
@@ -2821,14 +2821,14 @@ static ngx_int_t setup_context(ngx_http_request_t* r) { /* {{{ */
 
     u->header_accumulator = ngx_pcalloc(r->pool, ulcf->max_header_len + 1);
     if (u->header_accumulator == NULL)
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
 
     u->header_accumulator_pos = u->header_accumulator;
     u->header_accumulator_end = u->header_accumulator + ulcf->max_header_len;
 
     u->output_buffer = ngx_pcalloc(r->pool, ulcf->buffer_size);
     if (u->output_buffer == NULL)
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
 
     u->output_buffer_pos = u->output_buffer;
     u->output_buffer_end = u->output_buffer + ulcf->buffer_size;
