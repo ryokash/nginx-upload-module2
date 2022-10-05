@@ -389,25 +389,6 @@ static ngx_path_init_t        ngx_http_upload_temp_path = {
 #endif
 
 /*
- * upload_init_ctx
- *
- * Initialize upload context. Memory for upload context which is being passed
- * as upload_ctx parameter could be allocated anywhere and should not be freed
- * prior to upload_shutdown_ctx call.
- *
- * IMPORTANT:
- *
- * After initialization the following routine SHOULD BE called:
- *
- * upload_parse_content_type -- to assign part boundary
- *
- * Parameter:
- *     upload_ctx -- upload context which is being initialized
- *
- */
-static void upload_init_ctx(ngx_http_upload_ctx_t* upload_ctx);
-
-/*
  * upload_shutdown_ctx
  *
  * Shutdown upload context. Discard all remaining data and
@@ -2715,28 +2696,6 @@ static void upload_flush_output_buffer(ngx_http_upload_ctx_t* upload_ctx) { /* {
     }
 } /* }}} */
 
-static void upload_init_ctx(ngx_http_upload_ctx_t* upload_ctx) { /* {{{ */
-    upload_ctx->boundary.data = upload_ctx->boundary_start = upload_ctx->boundary_pos = 0;
-
-    upload_ctx->state = upload_state_boundary_seek;
-
-    upload_discard_part_attributes(upload_ctx);
-
-    upload_ctx->discard_data = 0;
-
-    upload_ctx->start_part_f = ngx_http_upload_start_handler;
-    upload_ctx->finish_part_f = ngx_http_upload_finish_handler;
-    upload_ctx->abort_part_f = ngx_http_upload_abort_handler;
-    upload_ctx->flush_output_buffer_f = ngx_http_upload_flush_output_buffer;
-
-    upload_ctx->started = 0;
-    upload_ctx->unencoded = 0;
-    /*
-     * Set default data handler
-     */
-    upload_ctx->data_handler = upload_process_buf;
-} /* }}} */
-
 static void upload_shutdown_ctx(ngx_http_upload_ctx_t* upload_ctx) { /* {{{ */
     if (upload_ctx != 0) {
         // Abort file if we still processing it
@@ -2815,7 +2774,20 @@ static ngx_int_t setup_context(ngx_http_request_t* r) { /* {{{ */
 
     u->files_uploaded = ngx_array_create(r->pool, 4, sizeof(ngx_http_uploaded_file_t));
 
-    upload_init_ctx(u);
+    u->boundary.data = u->boundary_start = u->boundary_pos = 0;
+    u->state = upload_state_boundary_seek;
+    upload_discard_part_attributes(u);
+    u->discard_data = 0;
+
+    u->started = 0;
+    u->unencoded = 0;
+
+    // set handlers
+    u->start_part_f = ngx_http_upload_start_handler;
+    u->finish_part_f = ngx_http_upload_finish_handler;
+    u->abort_part_f = ngx_http_upload_abort_handler;
+    u->flush_output_buffer_f = ngx_http_upload_flush_output_buffer;
+    u->data_handler = upload_process_buf;
 
     u->store_path = ulcf->store_path; // TODO: is ngx_str_t assignable?
 
