@@ -747,39 +747,32 @@ ngx_http_upload_handler(ngx_http_request_t* r)
     if ((rc = setup_context(r)) != NGX_OK)
         return rc;
 
-    if ((rc = upload_parse_request_headers(r)) != NGX_OK) {
-        upload_shutdown_ctx(get_context(r));
-        return rc;
-    }
+    if ((rc = upload_parse_request_headers(r)) != NGX_OK)
+        goto server_error;
 
-    if (ngx_http_upload_test_expect(r) != NGX_OK) {
-        upload_shutdown_ctx(get_context(r));
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
+    if ((rc = ngx_http_upload_test_expect(r)) != NGX_OK)
+        goto server_error;
 
 #if (NGX_HTTP_V2)
     if (r->stream) {
         r->request_body_no_buffering = 1;
 
         rc = ngx_http_read_client_request_body(r, ngx_http_upload_read_event_handler);
-
-        if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-            upload_shutdown_ctx(u);
-            return rc;
-        }
+        if (rc >= NGX_HTTP_SPECIAL_RESPONSE) 
+            goto internal_server_error;
 
         return NGX_DONE;
     }
 #endif
-
-    rc = ngx_http_read_upload_client_request_body(r);
-
-    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-        return rc;
-    }
+    if ((rc = ngx_http_read_upload_client_request_body(r)) >= NGX_HTTP_SPECIAL_RESPONSE)
+        goto server_error;
 
     return NGX_DONE;
+
+server_error:
+    upload_shutdown_ctx(get_context(r));
+    return rc;
+
 } /* }}} */
 
 #if (NGX_HTTP_V2)
@@ -2098,16 +2091,14 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
     r->main->count++;
 #endif
 
-    if (r->request_body || r->discard_body) {
+    if (r->request_body || r->discard_body)
         return NGX_OK;
-    }
 
     rb = ngx_pcalloc(r->pool, sizeof(ngx_http_request_body_t));
     if (rb == NULL) {
         upload_shutdown_ctx(u);
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
-
     r->request_body = rb;
 
     if (r->headers_in.content_length_n <= 0) {
@@ -2124,9 +2115,7 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
      */
 
     preread = r->header_in->last - r->header_in->pos;
-
     if (preread) {
-
         /* there is the pre-read part of the request body */
 
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -3194,5 +3183,5 @@ ngx_http_upload_test_expect(ngx_http_request_t* r)
 
     /* we assume that such small packet should be send successfully */
 
-    return NGX_ERROR;
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
 } /* }}} */
