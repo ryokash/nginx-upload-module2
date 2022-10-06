@@ -317,6 +317,7 @@ typedef struct ngx_http_upload_ctx_s {
     unsigned int        raw_input : 1;
 } ngx_http_upload_ctx_t;
 
+#if 0
 static int ngx_pcasecmp(const ngx_str_t* s1, const ngx_str_t* s2)
 {
     int clen = min(s1->len, s2->len);
@@ -331,6 +332,21 @@ static inline int ngx_casecmp(ngx_str_t s1, ngx_str_t s2)
 {
     return ngx_pcasecmp(&s1, &s2);
 }
+#endif
+
+static int ngx_pstartswith(const ngx_str_t* s, const ngx_str_t* search)
+{
+    if (s->len < search->len)
+        return 0;
+
+    int cmp = ngx_strncasecmp(s->data, search->data, search->len);
+    return (int)(cmp == 0);
+}
+static inline int ngx_startswith(ngx_str_t s, ngx_str_t search)
+{
+    return ngx_pstartswith(&s, &search);
+}
+
 
 static ngx_int_t ngx_http_upload_test_expect(ngx_http_request_t* r);
 
@@ -2815,7 +2831,7 @@ static ngx_int_t upload_parse_request_headers(ngx_http_request_t* r) { /* {{{ */
     }
 
     content_type = headers_in->content_type->value;
-    if (ngx_casecmp(content_type, MULTIPART_FORM_DATA)) {
+    if (!ngx_startswith(content_type, MULTIPART_FORM_DATA)) {
         ngx_log_error(NGX_LOG_ERR, log, 0,
             "Content-Type is not multipart/form-data and resumable uploads are off: %V", &content_type);
         return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
