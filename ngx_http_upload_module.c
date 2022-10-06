@@ -101,7 +101,7 @@ int ftruncate(HANDLE fd, _off_t length)
 #endif
 
 #define ngx_fsize(file) ngx_file_size(&file->info)
-#define ngx_findsubstr(s, search) ngx_strstrn(s, (char*)search.data, search.len)
+#define ngx_findsubstr(s, search) ngx_strstrn(s, (char*)search.data, search.len - 1)
 
 
 #define MULTIPART_FORM_DATA_STRING              "multipart/form-data"
