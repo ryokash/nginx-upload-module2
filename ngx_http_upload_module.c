@@ -101,6 +101,7 @@ int ftruncate(HANDLE fd, _off_t length)
 #endif
 
 #define ngx_fsize(file) ngx_file_size(&file->info)
+#define ngx_findsubstr(s, search) ngx_strstrn(s, (char*)search.data, search.len)
 
 
 #define MULTIPART_FORM_DATA_STRING              "multipart/form-data"
@@ -112,6 +113,16 @@ int ftruncate(HANDLE fd, _off_t length)
 #define FILENAME_STRING                         "filename="
 #define FIELDNAME_STRING                        "name="
 #define BYTES_UNIT_STRING                       "bytes "
+
+const ngx_str_t MULTIPART_FORM_DATA = ngx_string(MULTIPART_FORM_DATA_STRING);
+const ngx_str_t BOUNDARY            = ngx_string(BOUNDARY_STRING);
+const ngx_str_t CONTENT_DISPOSITION = ngx_string(CONTENT_DISPOSITION_STRING);
+const ngx_str_t CONTENT_TYPE        = ngx_string(CONTENT_TYPE_STRING);
+const ngx_str_t FORM_DATA           = ngx_string(FORM_DATA_STRING);
+const ngx_str_t ATTACHMENT          = ngx_string(ATTACHMENT_STRING);
+const ngx_str_t FILENAME            = ngx_string(FILENAME_STRING);
+const ngx_str_t FIELDNAME           = ngx_string(FIELDNAME_STRING);
+const ngx_str_t BYTES_UNIT          = ngx_string(BYTES_UNIT_STRING);
 
 #define NGX_UPLOAD_MALFORMED    -11
 #define NGX_UPLOAD_NOMEM        -12
@@ -306,18 +317,20 @@ typedef struct ngx_http_upload_ctx_s {
     unsigned int        raw_input : 1;
 } ngx_http_upload_ctx_t;
 
-#if 0
-static int ngx_casecmp(ngx_str_t s1, ngx_str_t s2)
+static int ngx_pcasecmp(const ngx_str_t* s1, const ngx_str_t* s2)
 {
-    int clen = min(s1.len, s2.len);
-    int cmp = ngx_strncasecmp(s1.data, s2.data, clen);
+    int clen = min(s1->len, s2->len);
+    int cmp = ngx_strncasecmp(s1->data, s2->data, clen);
     
-    if (cmp == 0 && s1.len != s2.len)
-        cmp = s1.len > s2.len ? 1 : -1;
+    if (cmp == 0 && s1->len != s2->len)
+        cmp = s1->len > s2->len ? 1 : -1;
 
     return cmp;
 }
-#endif
+static inline int ngx_casecmp(ngx_str_t s1, ngx_str_t s2)
+{
+    return ngx_pcasecmp(&s1, &s2);
+}
 
 static ngx_int_t ngx_http_upload_test_expect(ngx_http_request_t* r);
 
@@ -2036,7 +2049,6 @@ ngx_http_upload_cleanup(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 static char* /* {{{ ngx_http_upload_module_init */
 ngx_http_upload_module_init(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
-    //__debugbreak();
     ngx_http_core_loc_conf_t* clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_upload_handler;
 
@@ -2138,7 +2150,6 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t* r) {
         rb->buf = b;
 
         if (preread >= r->headers_in.content_length_n) {
-
             /* the whole request body was pre-read */
 
             r->header_in->pos += r->headers_in.content_length_n;
@@ -2785,50 +2796,45 @@ static ngx_int_t setup_context(ngx_http_request_t* r) { /* {{{ */
 } /* }}} */
 
 static ngx_int_t upload_parse_request_headers(ngx_http_request_t* r) { /* {{{ */
-    ngx_str_t* content_type;
+    ngx_str_t content_type;
     u_char* mime_type_end_ptr;
     u_char* boundary_start_ptr, * boundary_end_ptr;
     
     ngx_http_upload_ctx_t* upload_ctx = get_context(r);
     ngx_http_headers_in_t* headers_in = &r->headers_in;
+    ngx_log_t* log = r->connection->log;
+
+    upload_ctx->boundary.len = 0;
+    upload_ctx->boundary.data = 0;
+    upload_ctx->boundary_start = upload_ctx->boundary_pos = 0;
 
     // Check whether Content-Type header is missing
     if (headers_in->content_type == NULL) {
-        ngx_log_error(NGX_LOG_ERR, upload_ctx->log, ngx_errno,
-            "missing Content-Type header");
+        ngx_log_error(NGX_LOG_ERR, log, ngx_errno, "missing Content-Type header");
         return NGX_HTTP_BAD_REQUEST;
     }
 
-    content_type = &headers_in->content_type->value;
-
-    if (ngx_strncasecmp(content_type->data, (u_char*)MULTIPART_FORM_DATA_STRING,
-        sizeof(MULTIPART_FORM_DATA_STRING) - 1)) {
-
-        ngx_log_error(NGX_LOG_ERR, upload_ctx->log, 0,
-            "Content-Type is not multipart/form-data and resumable uploads are off: %V", content_type);
+    content_type = headers_in->content_type->value;
+    if (ngx_casecmp(content_type, MULTIPART_FORM_DATA)) {
+        ngx_log_error(NGX_LOG_ERR, log, 0,
+            "Content-Type is not multipart/form-data and resumable uploads are off: %V", &content_type);
         return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
     }
 
     // Find colon in content type string, which terminates mime type
-    mime_type_end_ptr = (u_char*)ngx_strchr(content_type->data, ';');
-
-    upload_ctx->boundary.data = 0;
-
+    mime_type_end_ptr = (u_char*)ngx_strchr(content_type.data, ';');
     if (mime_type_end_ptr == NULL) {
-        ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-            "no boundary found in Content-Type");
+        ngx_log_debug0(NGX_LOG_DEBUG_CORE, log, 0, "no boundary found in Content-Type");
         return NGX_UPLOAD_MALFORMED;
     }
 
-    boundary_start_ptr = ngx_strstrn(mime_type_end_ptr, BOUNDARY_STRING, sizeof(BOUNDARY_STRING) - 2);
-
+    boundary_start_ptr = ngx_findsubstr(mime_type_end_ptr, BOUNDARY);
     if (boundary_start_ptr == NULL) {
-        ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-            "no boundary found in Content-Type");
+        ngx_log_debug0(NGX_LOG_DEBUG_CORE, log, 0, "no boundary found in Content-Type");
         return NGX_UPLOAD_MALFORMED; // No boundary found
     }
 
-    boundary_start_ptr += sizeof(BOUNDARY_STRING) - 1;
+    boundary_start_ptr += BOUNDARY.len;
     boundary_end_ptr = boundary_start_ptr + strcspn((char*)boundary_start_ptr, " ;\n\r");
 
     // Handle quoted boundaries
@@ -2838,8 +2844,7 @@ static ngx_int_t upload_parse_request_headers(ngx_http_request_t* r) { /* {{{ */
     }
 
     if (boundary_end_ptr == boundary_start_ptr) {
-        ngx_log_debug0(NGX_LOG_DEBUG_CORE, upload_ctx->log, 0,
-            "boundary is empty");
+        ngx_log_debug0(NGX_LOG_DEBUG_CORE, log, 0, "boundary is empty");
         return NGX_UPLOAD_MALFORMED;
     }
 
