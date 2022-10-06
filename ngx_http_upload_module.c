@@ -2461,43 +2461,118 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t* r)
     return upload_done(r, u->files_uploaded);
 } /* }}} */
 
+
+#if 0
+static ngx_chain_t* alloc_chain(ngx_pool_t* pool, size_t size)
+{
+    ngx_buf_t* buf = ngx_pcalloc(pool, sizeof(ngx_buf_t));
+    if (buf == NULL)
+        return NULL;
+
+    u_char* buff = ngx_palloc(pool, size);
+    if (buff == NULL)
+        return NULL;
+
+    buf->start = buf->pos = buf->last = buff;
+    buf->end = buff + size;
+    buf->temporary= 1;
+
+    ngx_chain_t* ret = ngx_alloc_chain_link(pool);
+    ret->buf = buf;
+
+    return ret;
+}
+#else
+static ngx_chain_t* alloc_chain(ngx_pool_t* pool, const char* fmt, ...)
+{
+    ngx_chain_t* ret = NULL;
+
+    va_list args;
+    va_start(args, fmt);
+
+    int size = vsnprintf(NULL, 0, fmt, args);
+    if (size < 0)
+        goto end;
+
+    u_char* buff = ngx_pcalloc(pool, size + 1);
+    if (buff == NULL)
+        goto end;
+
+    vsnprintf((char*)buff, size + 1, fmt, args);
+
+
+    ngx_buf_t* buf = ngx_pcalloc(pool, sizeof(ngx_buf_t));
+    if (buf == NULL)
+        goto end;
+
+    buf->start = buf->pos = buff;
+    buf->last = buff + size;
+    buf->end = buff + size + 1;
+    buf->temporary= 1;
+
+    ret = ngx_alloc_chain_link(pool);
+    if (ret)
+        ret->buf = buf;
+
+end:
+    va_end(args);
+    return ret;
+}
+#endif
+
 static ngx_int_t upload_done(ngx_http_request_t* r, ngx_array_t* files)
 {
-    const char* content_type = "text/plain";
-    const char* text = "upload completed successfully";
+    const char* content_type = "application/json";
 
     ngx_int_t rc;
+    off_t content_length = 0;
+    ngx_chain_t *out = NULL, *last = NULL, *chain = NULL;
+
+    chain = alloc_chain(r->pool, "[");
+    if (chain == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Failed to allocate memory.");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    content_length += chain->buf->last - chain->buf->pos;
+    out = last = chain;
+
+    ngx_http_uploaded_file_t* fs = files->elts;
+    for (ngx_uint_t i = 0; i < files->nelts; ++i) {
+        ngx_http_uploaded_file_t* f = fs + i;
+        if (i == 0)
+            chain = alloc_chain(r->pool, "{\"file\": \"%s\", \"id\": \"%s\"}", f->original_name.data, f->stored_name.data);
+        else
+            chain = alloc_chain(r->pool, ",{\"file\": \"%s\", \"id\": \"%s\"}", f->original_name.data, f->stored_name.data);
+        
+        if (chain == NULL) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Failed to allocate memory.");
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+        content_length += chain->buf->last - chain->buf->pos;
+        last = last->next = chain;
+    }
+
+    chain = alloc_chain(r->pool, "]");
+    if (chain == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Failed to allocate memory.");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    content_length += chain->buf->last - chain->buf->pos;
+    last = last->next = chain;
+
+    last->buf->last_buf = 1;
 
     ngx_http_headers_out_t* hs = &r->headers_out;
     hs->content_type.len = strlen(content_type);
     hs->content_type.data = (u_char*)content_type;
     hs->status = NGX_HTTP_OK;
-    hs->content_length_n = strlen(text);
-
-    ngx_buf_t* buf = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
-    if (buf == NULL)
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-
-    ngx_chain_t out = { buf, NULL };
-    u_char* buff = ngx_palloc(r->pool, hs->content_length_n);
-    if (buff == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Failed to allocate memory.");
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-    ngx_memcpy(buff, text, hs->content_length_n);
-
-    buf->pos = buff;
-    buf->last = buff + hs->content_length_n;
-    buf->memory = 1;
-    buf->last_buf = 1;
+    hs->content_length_n = content_length;
 
     rc = ngx_http_send_header(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only)
         return rc;
 
-    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "handle sem suggest GET");
-
-    rc = ngx_http_output_filter(r, &out);
+    rc = ngx_http_output_filter(r, out);
     if (rc < NGX_HTTP_SPECIAL_RESPONSE)
         ngx_http_finalize_request(r, rc);
     return rc;
